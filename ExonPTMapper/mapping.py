@@ -448,6 +448,18 @@ def load_PTMmapper():
     mapper = PTM_mapper(exons, transcripts, ptms_all)
     return mapper
 	
+    
+def location_RNAtoProt(pos, cds_start):
+    """
+    Given nucleotide location, indicate the location of residue in protein
+    """
+    return (pos - cds_start)/3
+
+def location_Prot_to_RNA(pos, cds_start):
+    """
+    Given residue location, indicate the location of first nucleotide in transcript 
+    """
+    return (pos*3) + cds_start - 1
 
           
 
