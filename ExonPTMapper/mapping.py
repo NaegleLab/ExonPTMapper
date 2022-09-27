@@ -30,7 +30,7 @@ class PTM_mapper:
         self.exons = exons
         self.exons.index = exons['Exon stable ID']
         self.transcripts = transcripts
-        #self.transcripts.index = transcripts['Transcript stable ID']
+        self.transcripts.index = transcripts['Transcript stable ID']
         #identify available transcripts for PTM analysis (i.e. those that match in gencode and PS)
         
         
@@ -141,11 +141,13 @@ class PTM_mapper:
         if len(list(transcript_id.split(','))) > 1:
             PTM_start = []
             exon_id = []
+            exon_rank = []
             exon_codon_start = []
             gene_codon_start = []
             for t in list(transcript_id.split(',')):
                 if self.transcripts.loc[t, 'CDS Start'] == 'error:no match found':
                     exon_id.append('CDS fail')
+                    exon_rank.append('CDS fail')
                     PTM_start.append('CDS fail')
                     exon_codon_start.append('CDS fail')
                     gene_codon_start.append('CDS fail')
@@ -161,6 +163,7 @@ class PTM_mapper:
                     exon_row = (start <= exon_info['Exon End (Transcript)']) & (start >= exon_info['Exon Start (Transcript)'])
                     exon_of_interest = exon_info[exon_row]
                     exon_id.append(exon_of_interest['Exon stable ID'].values[0])
+                    exon_rank.append(exon_of_interest['Exon rank'].values[0])
             
                     #find location in exon and gene
                     exon_codon_start.append(str(start - int(exon_of_interest['Exon Start (Transcript)'].values[0])))
@@ -172,11 +175,13 @@ class PTM_mapper:
             #convert lists to strings
             PTM_start = ','.join(set(PTM_start))   
             exon_id = ','.join(exon_id) 
+            exon_rank = ','.join(exon_rank)
             exon_codon_start = ','.join(set(exon_codon_start))
             gene_codon_start = ','.join(set(gene_codon_start))
         else:
             if self.transcripts.loc[transcript_id, 'CDS Start'] == 'error:no match found':
                 exon_id = 'CDS fail'
+                exon_rank = 'CDS fail'
                 PTM_start ='CDS fail'
                 exon_codon_start = 'CDS fail'
                 gene_codon_start = 'CDS fail'
@@ -192,6 +197,7 @@ class PTM_mapper:
                 exon_row = (PTM_start <= exon_info['Exon End (Transcript)']) & (PTM_start >= exon_info['Exon Start (Transcript)'])
                 exon_of_interest = exon_info[exon_row]
                 exon_id = exon_of_interest['Exon stable ID'].values[0]
+                exon_rank = exon_of_interest['Exon rank'].values[0]
         
                 #find location in exon and gene
                 exon_codon_start = PTM_start - int(exon_of_interest['Exon Start (Transcript)'].values[0])
@@ -200,7 +206,7 @@ class PTM_mapper:
                 else:
                     gene_codon_start = 'not available'
         
-        return PTM_start, exon_id, exon_codon_start, gene_codon_start
+        return PTM_start, exon_id, exon_rank, exon_codon_start, gene_codon_start
             
             
         
@@ -210,25 +216,38 @@ class PTM_mapper:
         """
         PTM_start_in_transcript = []
         found_in_exon = []
+        found_in_exon_rank = []
         exon_codon_start = []
         gene_codon_start = []
         for ptm in self.ptm_info.index:
-            start = time.time()
             results = self.mapPTM(ptm)
-            stop = time.time()
-            print('Elapsed time:',stop-start)
             PTM_start_in_transcript.append(results[0])
             found_in_exon.append(results[1])
-            exon_codon_start.append(results[2])
-            gene_codon_start.append(results[3])
+            found_in_exon_rank.append(results[2]
+            exon_codon_start.append(results[3])
+            gene_codon_start.append(results[4])
             
         #save information
         self.ptm_positions['Gene Location (NC)'] = gene_codon_start
         self.ptm_positions['Transcript Location (NC)'] = PTM_start_in_transcript
         self.ptm_positions['Exon Location (NC)'] = exon_codon_start
         self.ptm_info['In Exon'] = found_in_exon
+        self.ptm_info['In Exon Rank'] = found_in_exon_rank
         
     def getTrypticFragment(self, ptm):
+        """
+        Given a ptm, find the tryptic fragment you would be likely to find from mass spec (trypsin cuts at lysine or arginine (except after proline). 
+        
+        Parameters
+        ----------
+        ptm: str
+            ptm to get tryptic fragment for, indicated by 'SubstrateID_SiteNum'
+        
+        Returns
+        -------
+        seq: str
+            tryptic fragment sequence
+        """
         pos = self.ptm_info.loc[ptm, 'PTM Location (AA)']
         transcript = self.ptm_info.loc[ptm, 'Transcripts']
         #if multiple transcripts associated with protein, only use first transcript (should be same seq)
@@ -251,12 +270,30 @@ class PTM_mapper:
         return seq[n_terminal_cut:c_terminal_cut]
     
     def getAllTrypticFragments(self):
+        """
+        Runs getTrypticFragment() for all ptms recorded in self.ptm_info. Adds 'Tryptic Fragment' column to self.ptm_info after running.
+        """
         fragment = []
         for ptm in self.ptm_info.index:
             fragment.append(self.getTrypticFragment(ptm))
         self.ptm_info['Tryptic Fragment'] = fragment
         
     def getFlankingSeq(self, ptm, flank_size = 4):
+        """
+        Get flanking sequence around the indicated PTM, with the number of residues upstream/downstream indicated by flank_size
+        
+        Parameters
+        ----------
+        ptm: str
+            ptm to get flanking sequence, indicated by 'SubstrateID_SiteNum'
+        flank_size: int
+            number of residues to return around the ptm
+            
+        Returns
+        -------
+        flank_seq: str
+            flanking sequence around the ptm of interest
+        """
         pos = self.ptm_info.loc[ptm, 'PTM Location (AA)']
         transcript = self.ptm_info.loc[ptm, 'Transcripts']
         #if multiple transcripts associated with protein, only use first transcript (should be same seq)
@@ -277,6 +314,9 @@ class PTM_mapper:
         return flank_seq
         
     def getAllFlankingSeqs(self, flank_size = 4):
+        """
+        Runs getAllFlankingSeqs() for all ptms recorded in self.ptm_info. Adds 'Flanking Sequence' column to self.ptm_info after running.
+        """
         flanks = []
         for ptm in self.ptm_info.index:
             flanks.append(self.getFlankingSeq(ptm, flank_size))
@@ -284,7 +324,22 @@ class PTM_mapper:
             
         
     def findFlankingSeq(self, transcript_id, flank_seq):
+        """
+        Given a transcript ID, find where the provided flanking sequence is located in the transcript. Can be used to see whether a ptm (and its flanking residues) are conserved within the transcript.
+        
+        Parameters
+        ----------
+        transcript_id: str
+            Ensemble transcript ID for transcript of interest
+        flank_seq: str
+            flanking sequence surrounding the ptm of interest
+        
+        Returns
+        -------
+        indicates the location of the ptm in the coded transcript (by residue)
+        """
         full_seq = str(self.transcripts.loc[self.transcripts['Transcript stable ID'] == transcript_id, 'amino acid seq'].values[0])
+        flank_len = (len(flank_seq)-1)/2
         match = re.search(str(flank_seq), full_seq)
         if match:
             #check to see if any other matches exist
@@ -296,6 +351,21 @@ class PTM_mapper:
             return np.nan
             
     def findInDomains(self, ptm):
+        """
+        Given a ptm, figure out whether the ptm is located in a domain.
+        
+        Parameters
+        ----------
+        ptm: str
+            ptm to get flanking sequence, indicated by 'SubstrateID_SiteNum'
+        
+        Returns
+        -------
+        inDomain: bool
+            indicates whether ptm is located in a domain
+        domain_type: str
+            if in domain, indicates the type of domain. If not in domain, returns np.nan.
+        """
         protein = self.ptm_info.loc[ptm, 'Protein']
         pos = self.ptm_info.loc[ptm, 'PTM Location (AA)']
         domains = config.ps_api.get_domains(protein, 'uniprot')
@@ -311,6 +381,9 @@ class PTM_mapper:
         return inDomain, domain_type
     
     def findAllinDomains(self):
+        """
+        Run findInDomain() for all ptms in self.ptm_info and save the results in self.ptm_info under 'inDomain' and 'Domain Type' columns.
+        """
         inDomain_list = []
         domain_type_list = []
         for ptm in self.ptm_info.index:
@@ -322,15 +395,28 @@ class PTM_mapper:
         self.ptm_info['Domain Type'] = domain_type_list
         
         
-    def closest_boundary(self, ptm, aa_cuts):
-
+    def closest_boundary(self, ptm):
+        """
+        Find the number of residues between the indicated ptm and the closest splice boundary
+        
+        Parameters
+        ----------
+        ptm: str
+            ptm to get flanking sequence, indicated by 'SubstrateID_SiteNum'
+        aa_cuts: list of floats
+            location of splice boundaries (based on amino acids)
+        
+        Returns
+        -------
+        min_distance: float
+            indicates the number of residues from the closest splice boundary
+        """
+        #get ptm position (residues)
         pos = int(self.ptm_info.loc[ptm,'position'])
         
-        distances = []
-        for cut in aa_cuts:
-            distance = abs(pos - cut)
-            distances.append(distance)
-        
+        #get exon cuts and convert to amino acids
+        exon_id = int(self.ptm_info.loc[ptm, 'Exon']
+        distances = [if pos <= cut abs(pos - cut) else abs(pos - cut) - 1 for cut in aa_cuts]
         min_distance = min(distances)
         
         int_distances = []
@@ -363,7 +449,6 @@ def load_PTMmapper():
     return mapper
 	
 
-           
-        
+          
 
     
