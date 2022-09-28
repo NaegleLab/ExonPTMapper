@@ -5,7 +5,11 @@ from Bio.Seq import Seq
 import gzip
 import re
 import sys
-from ptm_mapping import config
+from ExonPTMapper import config
+import dask.dataframe as dd
+import dask
+dask.config.set(scheduler='processes')
+
 import time
 #import swifter
 
@@ -18,64 +22,114 @@ Need 3 file types downloaded from_ensembl (can only download limited information
 
 ****Would likely be useful to have code for pulling from ensembl rather than just file types
 """
-def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
+def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None, PROCESSES = 1, parallel_approach = 'dask'):
 	#load exon specific information and compile into one data structure
+	print('Creating exon dataframe')
+	start = time.time()
 	exons = pd.merge(exon_rank, exon_sequences, left_on = 'Exon stable ID', right_on = 'id', how = 'left')
+	end = time.time()
+	print('Elapsed time:', end -start, '\n')
 	
 	print('converting exon information into transcript information')
 	#use exon information above to compile transcript sequences
 	start = time.time()
-	exons = exons.sort_values(by = 'Exon rank in transcript')
+	exons = exons.sort_values(by = ['Exon rank in transcript'])
 	transcripts = exons.groupby('Transcript stable ID')['seq'].apply(''.join)
 	end = time.time()
 	print('Elapsed time:', end -start, '\n')
-		
-	#add gene id to transcripts
+	
+	
 	print('Getting exon lengths and cuts')
 	#get exon length and cuts
 	start = time.time()
-	exons["Exon Length"] = exons.apply(exonlength, axis = 1)
+	exons["Exon Length"] = exons['seq'].apply(len)
 	exons = exons.sort_values(by = ['Transcript stable ID', 'Exon rank in transcript'])
 	exons['Exon End (Transcript)'] = exons.groupby('Transcript stable ID').cumsum()['Exon Length']
 	exons['Exon Start (Transcript)'] = exons['Exon End (Transcript)'] - exons['Exon Length']
 	transcripts = pd.DataFrame(transcripts)
-	transcripts['Exon cuts'] = exons.groupby('Transcript stable ID')['Exon End (Transcript)'].apply(list)
+	exons['Exon End (Transcript)'] = exons['Exon End (Transcript)'].astype(str)
+	transcripts['Exon cuts'] = exons.groupby('Transcript stable ID')['Exon End (Transcript)'].apply(','.join)
 	end = time.time()
 	print('Elapsed time:', end - start, '\n')
-	
-	
-	print('Finding coding sequence location in transcript')
-	#find coding sequence location in transcript
-	start = time.time()
-	#add coding sequences to transcript info
-	transcripts = pd.merge(transcripts, coding_seqs, on = 'Transcript stable ID', how = 'inner')
-	#cds_start,cds_stop = transcripts.apply(findCodingRegion, axis = 1)
-	cds_start, cds_stop = findCodingRegion(transcripts)
-	transcripts['CDS Start'] = cds_start
-	transcripts['CDS Stop'] = cds_stop
-	
-	end = time.time()
-	print('Elapsed time:',end - start,'\n')
-	
-	print('Getting amino acid sequences')
-	#translate coding region to get amino acid sequence
-	start = time.time()
-	transcripts['Amino Acid Seq'] = transcripts.apply(translate, axis = 1)
-	end = time.time()
-	print('Elapsed time:',end -start,'\n')
-	
-	
-	#add gene id to transcripts dataframe
-	transcripts.index = transcripts['Transcript stable ID']
-	gene_ids = exons[['Gene stable ID', 'Transcript stable ID']].drop_duplicates()
-	gene_ids.index = gene_ids['Transcript stable ID']
-	#identify transcript IDs found in both the transcript dataframe and exon dataframe
-	overlapping_trans = set(gene_ids.index).intersection(transcripts.index)
-	gene_ids = gene_ids.loc[list(overlapping_trans)]
-	transcripts.loc[gene_ids.index.values, 'Gene stable ID'] = gene_ids['Gene stable ID']
-	
+
+	if PROCESSES > 1:
+		#get dask dataframe
+		dd_exons = dd.from_pandas(exons, npartitions = PROCESSES)
+		dd_trans = dd.from_pandas(transcripts, npartitions = PROCESSES)
 		
-	if config.available_transcripts is None:
+		print('Finding coding sequence location in transcript')
+		#find coding sequence location in transcript
+		start = time.time()
+		#add coding sequences to transcript info
+		dd_trans = dd_trans.merge(coding_seqs, on = 'Transcript stable ID', how = 'inner')
+		#cds_start,cds_stop = transcripts.apply(findCodingRegion, axis = 1)
+		cds = dd_trans.apply(findCodingRegion, axis = 1, meta = (None, 'object')).apply(pd.Series, index=['CDS Start', 'CDS Stop'], meta={'CDS Start':int,'CDS Stop': int}).compute()
+		dd_trans['CDS Start'] = cds['CDS Start']
+		dd_trans['CDS Stop'] = cds['CDS Stop']
+		
+		end = time.time()
+		print('Elapsed time:',end - start,'\n')
+		
+		
+		print('Getting amino acid sequences')
+		#translate coding region to get amino acid sequence
+		start = time.time()
+		dd_trans['Amino Acid Seq'] = dd_trans['coding seq'].apply(translate, meta = ('coding seq','str')).compute()
+		end = time.time()
+		print('Elapsed time:',end -start,'\n')
+		
+		print('Getting gene info')
+		#add gene id to transcripts dataframe
+		start = time.time()
+		dd_trans.index = dd_trans['Transcript stable ID']
+		gene_ids = exons[['Gene stable ID', 'Transcript stable ID']].drop_duplicates()
+		gene_ids.index = gene_ids['Transcript stable ID']
+		#identify transcript IDs found in both the transcript dataframe and exon dataframe
+		overlapping_trans = set(gene_ids.index).intersection(dd_trans.index)
+		gene_ids = gene_ids.loc[list(overlapping_trans)]
+		dd_trans.loc[gene_ids.index.values, 'Gene stable ID'] = gene_ids['Gene stable ID']
+		end = time.time()
+		print('Elapsed time:',end -start,'\n')
+		
+		return dd_exons, dd_transcripts
+	else:
+		
+		
+		
+		print('Finding coding sequence location in transcript')
+		#find coding sequence location in transcript
+		start = time.time()
+		#add coding sequences to transcript info
+		transcripts = pd.merge(transcripts, coding_seqs, on = 'Transcript stable ID', how = 'inner')
+		#cds_start,cds_stop = transcripts.apply(findCodingRegion, axis = 1)
+		cds = transcripts.apply(findCodingRegion, axis = 1).apply(pd.Series, index=['CDS Start', 'CDS Stop'])
+		transcripts['CDS Start'] = cds['CDS Start']
+		transcripts['CDS Stop'] = cds['CDS Stop']
+		
+		end = time.time()
+		print('Elapsed time:',end - start,'\n')
+		
+		print('Getting amino acid sequences')
+		#translate coding region to get amino acid sequence
+		start = time.time()
+		transcripts['Amino Acid Seq'] = transcripts['coding seq'].apply(translate)
+		end = time.time()
+		print('Elapsed time:',end -start,'\n')
+		
+		
+		#add gene id to transcripts dataframe
+		transcripts.index = transcripts['Transcript stable ID']
+		gene_ids = exons[['Gene stable ID', 'Transcript stable ID']].drop_duplicates()
+		gene_ids.index = gene_ids['Transcript stable ID']
+		#identify transcript IDs found in both the transcript dataframe and exon dataframe
+		overlapping_trans = set(gene_ids.index).intersection(transcripts.index)
+		gene_ids = gene_ids.loc[list(overlapping_trans)]
+		transcripts.loc[gene_ids.index.values, 'Gene stable ID'] = gene_ids['Gene stable ID']
+	
+		return exons, transcripts
+	
+def getMatchedTransripts(transcripts, update = False):	
+	if config.available_transcripts is None or update:
 		print('Finding available transcripts')
 		start = time.time()
 		#get transcripts whose amino acid sequences are identifical in proteomeScoute and GenCode
@@ -95,52 +149,19 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 			json.dump(config.available_transcripts, f, indent=2) 
 		end = time.time()
 		print('Elapsed time:',end-start, '\n')
-        
-    	#find location of exon in gene
-	if unspliced_gene is not None:
-		print('Finding location of Exon in Gene')
-		start = time.time()
-		#exons['Exon Start (Gene)'], exons['Exon End (Gene)'] = exons.apply(findExonInGene, axis = 1, args = (unspliced_gene))
-		exons['Exon Start (Gene)'], exons['Exon End (Gene)'] = findExonInGene(exons, unspliced_gene)
-		end = time.time()
-		print('Elapsed time:',end -start,'\n')
-        
-        print('Finding single exon genes')
-        start = time.time()
-        #get all exon cuts for each transcript
-        tmp = transcripts['Exon cuts'].apply(lambda x: x[1:-1].split(','))
-        #identify transcripts with single exon cut (only one exon in gene)
-        single_exon_transcripts = tmp[tmp.apply(len) == 1].index.values
-        transcripts['Single Exon Transcript'] = False
-        transcripts.loc[single_exon_transcripts, 'Single Exon Transcript'] = True
-        single_exon_genes = transcripts.groupby('Gene stable ID')['Single Exon Transcript'].all()
-        unspliced_gene['Single Exon Gene'] = single_exon_genes
-        end = time.time()
-        print('Elapsed Time:',end-start,'\n')
-        
-        print('Finding genes with at least one transcript with mapped coding sequence')
-        start = time.time()
-        #identify all transcripts with coding sequence
-        coding_transcripts = transcripts[transcripts['coding seq'] != 'Sequenceunavailable']
-        #identify genes associated with at least one coding transcript
-        coding_genes = coding_transcripts['Gene stable ID'].unique()
-        #record genes with coding sequence in genes dataframe
-        unspliced_gene['Coding Gene'] = False
-        coding_genes = [gene for gene in coding_genes if gene in unspliced_gene.index.values]
-        unspliced_gene.loc[coding_genes, 'Coding Gene'] = True
-        stop = time.time()
-        print('Elapsed time:',end-start,'\n')  
-        return exons, transcripts, unspliced_gene
-    
-	return exons, transcripts
+	else:
+		print('Already have the available transcripts. If you would like to update analysis, set update=True')
 
-def exonlength(row):
-	exon = row['seq']
-	length = len(exon)
-	
-	return length
+def findCodingRegion(transcript):
+	coding_sequence = transcript['coding seq']
+	full_transcript = transcript['seq']
+	match = re.search(coding_sequence, full_transcript)
+	if match:
+		return match.span()[0], match.span()[1]
+	else:
+		return 'error:no match found', 'error:no match found'
 
-	
+"""
 def findCodingRegion(transcripts):
 	five_cut = []
 	three_cut = []
@@ -156,10 +177,9 @@ def findCodingRegion(transcripts):
 			three_cut.append('error:no match found')
 	
 	return five_cut, three_cut
-	
-def translate(row):
-	seq = row['coding seq']
-	
+"""
+
+def translate(seq):
 	if seq == 'error1':
 		aa_seq = 'error1'
 	elif seq == 'error: no start codon matched':

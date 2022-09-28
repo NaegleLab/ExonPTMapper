@@ -1,0 +1,3 @@
+dask
+biopython = 1.79
+jupyter
