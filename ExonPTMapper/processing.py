@@ -5,7 +5,7 @@ from Bio.Seq import Seq
 import gzip
 import re
 import sys
-from ptm_mapping import config
+from ExonPTMapper import config
 import time
 #import swifter
 
@@ -29,7 +29,7 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 	transcripts = exons.groupby('Transcript stable ID')['seq'].apply(''.join)
 	end = time.time()
 	print('Elapsed time:', end -start, '\n')
-		
+	
 	#add gene id to transcripts
 	print('Getting exon lengths and cuts')
 	#get exon length and cuts
@@ -95,8 +95,8 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 			json.dump(config.available_transcripts, f, indent=2) 
 		end = time.time()
 		print('Elapsed time:',end-start, '\n')
-        
-    	#find location of exon in gene
+		
+		#find location of exon in gene
 	if unspliced_gene is not None:
 		print('Finding location of Exon in Gene')
 		start = time.time()
@@ -104,34 +104,34 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 		exons['Exon Start (Gene)'], exons['Exon End (Gene)'] = findExonInGene(exons, unspliced_gene)
 		end = time.time()
 		print('Elapsed time:',end -start,'\n')
-        
-        print('Finding single exon genes')
-        start = time.time()
-        #get all exon cuts for each transcript
-        tmp = transcripts['Exon cuts'].apply(lambda x: x[1:-1].split(','))
-        #identify transcripts with single exon cut (only one exon in gene)
-        single_exon_transcripts = tmp[tmp.apply(len) == 1].index.values
-        transcripts['Single Exon Transcript'] = False
-        transcripts.loc[single_exon_transcripts, 'Single Exon Transcript'] = True
-        single_exon_genes = transcripts.groupby('Gene stable ID')['Single Exon Transcript'].all()
-        unspliced_gene['Single Exon Gene'] = single_exon_genes
-        end = time.time()
-        print('Elapsed Time:',end-start,'\n')
-        
-        print('Finding genes with at least one transcript with mapped coding sequence')
-        start = time.time()
-        #identify all transcripts with coding sequence
-        coding_transcripts = transcripts[transcripts['coding seq'] != 'Sequenceunavailable']
-        #identify genes associated with at least one coding transcript
-        coding_genes = coding_transcripts['Gene stable ID'].unique()
-        #record genes with coding sequence in genes dataframe
-        unspliced_gene['Coding Gene'] = False
-        coding_genes = [gene for gene in coding_genes if gene in unspliced_gene.index.values]
-        unspliced_gene.loc[coding_genes, 'Coding Gene'] = True
-        stop = time.time()
-        print('Elapsed time:',end-start,'\n')  
-        return exons, transcripts, unspliced_gene
-    
+		
+		print('Finding single exon genes')
+		start = time.time()
+		#get all exon cuts for each transcript
+		tmp = transcripts['Exon cuts'].apply(lambda x: x[1:-1].split(','))
+		#identify transcripts with single exon cut (only one exon in gene)
+		single_exon_transcripts = tmp[tmp.apply(len) == 1].index.values
+		transcripts['Single Exon Transcript'] = False
+		transcripts.loc[single_exon_transcripts, 'Single Exon Transcript'] = True
+		single_exon_genes = transcripts.groupby('Gene stable ID')['Single Exon Transcript'].all()
+		unspliced_gene['Single Exon Gene'] = single_exon_genes
+		end = time.time()
+		print('Elapsed Time:',end-start,'\n')
+		
+		print('Finding genes with at least one transcript with mapped coding sequence')
+		start = time.time()
+		#identify all transcripts with coding sequence
+		coding_transcripts = transcripts[transcripts['coding seq'] != 'Sequenceunavailable']
+		#identify genes associated with at least one coding transcript
+		coding_genes = coding_transcripts['Gene stable ID'].unique()
+		#record genes with coding sequence in genes dataframe
+		unspliced_gene['Coding Gene'] = False
+		coding_genes = [gene for gene in coding_genes if gene in unspliced_gene.index.values]
+		unspliced_gene.loc[coding_genes, 'Coding Gene'] = True
+		stop = time.time()
+		print('Elapsed time:',end-start,'\n')  
+		return exons, transcripts, unspliced_gene
+	
 	return exons, transcripts
 
 def exonlength(row):
