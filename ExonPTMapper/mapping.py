@@ -5,7 +5,7 @@ import gzip
 import re
 import sys
 import time
-from ptm_mapping import config
+from ExonPTMapper import config
 
 
 class PTM_mapper:
@@ -30,7 +30,7 @@ class PTM_mapper:
         self.exons = exons
         self.exons.index = exons['Exon stable ID']
         self.transcripts = transcripts
-        self.transcripts.index = transcripts['Transcript stable ID']
+        #self.transcripts.index = transcripts['Transcript stable ID']
         #identify available transcripts for PTM analysis (i.e. those that match in gencode and PS)
         
         
@@ -223,7 +223,7 @@ class PTM_mapper:
             results = self.mapPTM(ptm)
             PTM_start_in_transcript.append(results[0])
             found_in_exon.append(results[1])
-            found_in_exon_rank.append(results[2]
+            found_in_exon_rank.append(results[2])
             exon_codon_start.append(results[3])
             gene_codon_start.append(results[4])
             
@@ -395,7 +395,7 @@ class PTM_mapper:
         self.ptm_info['Domain Type'] = domain_type_list
         
         
-    def closest_boundary(self, ptm):
+    def distance_to_boundary(self, ptm):
         """
         Find the number of residues between the indicated ptm and the closest splice boundary
         
@@ -411,27 +411,45 @@ class PTM_mapper:
         min_distance: float
             indicates the number of residues from the closest splice boundary
         """
+        print(ptm)
         #get ptm position (residues)
-        pos = int(self.ptm_info.loc[ptm,'position'])
+        pos = int(self.ptm_info.loc[ptm,'PTM Location (AA)'])
+        if self.ptm_info.loc[ptm, 'In Exon Rank'].split(',')[0] != 'transcript not found':
+            rank = int(self.ptm_info.loc[ptm, 'In Exon Rank'].split(',')[0])
         
-        #get exon cuts and convert to amino acids
-        exon_id = int(self.ptm_info.loc[ptm, 'Exon']
-        distances = [if pos <= cut abs(pos - cut) else abs(pos - cut) - 1 for cut in aa_cuts]
-        min_distance = min(distances)
+            #get exon cuts and convert to amino acids
+            transcript_id = self.ptm_info.loc[ptm, 'Transcripts'].split(',')[0]
+            #add 0 to list to indicate start of transcript
+            nc_cuts = [0]+self.transcripts.loc[transcript_id, 'Exon cuts'].split('[')[1].split(']')[0].split(',')
+            
+            #get n and c-terminal cuts, convert to residue location
+            nc_cuts = [nc_cuts[rank-1],nc_cuts[rank]]
+            cds_start = self.transcripts.loc[transcript_id, 'CDS Start']
+            nc_pos = Prot_to_RNA(pos, cds_start)
+            #aa_cuts = [RNA_to_Prot(cut, cds_start) for cut in nc_cuts]
+            #calculate distance between PTM and closest N-terminal splice boundary
+            n_distance = nc_pos - int(nc_cuts[0])
+            #calculate distance between PTM and closest C-terminal splice boundary
+            c_distance = int(nc_cuts[1]) - nc_pos
         
-        int_distances = []
-        for cut in aa_cuts:
-            int_distance = pos - cut
-            int_distances.append(int_distance)
-
-        if int_distances[ distances.index(min_distance) ] < 0:
-            min_distance = min_distance 
-        elif int_distances[ distances.index(min_distance) ] == 0:
-            min_distance = 0
+            return n_distance, c_distance
         else:
-            min_distance = min_distance - 1
+            return np.nan, np.nan
         
-        return min_distance
+    def boundary_analysis(self):
+        """
+        Find how close each ptm is to the splice boundaries
+        
+        """
+        c_boundary = []
+        n_boundary = []
+        for ptm in self.ptm_info.index:
+            results = self.distance_to_boundary(ptm)
+            n_boundary.append(results[0])
+            c_boundary.append(results[1])
+            
+        self.ptm_info['Distance to N-term'] = n_boundary
+        self.ptm_info['Distance to C-term'] = c_boundary
         
         
     def savePTMs(self):
@@ -449,17 +467,17 @@ def load_PTMmapper():
     return mapper
 	
     
-def location_RNAtoProt(pos, cds_start):
+def RNA_to_Prot(pos, cds_start):
     """
     Given nucleotide location, indicate the location of residue in protein
     """
-    return (pos - cds_start)/3
+    return (int(pos) - int(cds_start)+3)/3
 
-def location_Prot_to_RNA(pos, cds_start):
+def Prot_to_RNA(pos, cds_start):
     """
-    Given residue location, indicate the location of first nucleotide in transcript 
+    Given residue location, indicate the location of first nucleotide in transcript (first nucleotide in the codon)
     """
-    return (pos*3) + cds_start - 1
+    return (int(pos)*3 -3) + int(cds_start)
 
           
 
