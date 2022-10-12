@@ -6,10 +6,13 @@ import re
 import sys
 import time
 from ptm_mapping import config
+import itertools
+from itertools import repeat
+import multiprocessing
 
 
 class PTM_mapper:
-    def __init__(self, exons, transcripts, ptms = None):
+    def __init__(self, exons, transcripts, ptms = None, PROCESSES = 1, use_multiprocessing = False):
         """
         Class for identifying relevant information about PTMs, and maps them to corresponding exons, transcripts, and genes
         
@@ -30,20 +33,29 @@ class PTM_mapper:
         self.exons = exons
         self.exons.index = exons['Exon stable ID']
         self.transcripts = transcripts
-        self.transcripts.index = transcripts['Transcript stable ID']
+        self.transcripts.index = transcripts.index
         #identify available transcripts for PTM analysis (i.e. those that match in gencode and PS)
         
         
         #if ptms not provided, identify
         if ptms is None:
             df_list = []
-            for prot in config.available_transcripts:
-                prot = str(prot)
-                info = self.find_ptms(prot)
-                if type(info) is str:		   
-                    df_list.append(info)
-                else:
-                    df_list.append(info)		
+            #find ptms
+            start = time.time()
+            if use_multiprocessing:
+                print('Not active yet')
+                pool = multiprocessing.Pool(processes = PROCESSES)
+                df_list = pool.map(self.find_ptms, config.available_transcripts)
+            else:
+                for prot in config.available_transcripts:
+                    prot = str(prot)
+                    info = self.find_ptms(prot)
+                    if type(info) is str:
+                        df_list.append(info)
+                    else:
+                        df_list.append(info)
+            stop = time.time()
+            print('Time to obtain PTMs from available transcripts:', stop-start)
                    
             self.ptm_info = pd.concat(df_list).dropna(axis = 1, how = 'all')
             self.ptm_info.index = self.ptm_info['Protein']+'_'+self.ptm_info['Residue']+self.ptm_info['PTM Location (AA)'].astype(int).astype(str)
@@ -57,7 +69,7 @@ class PTM_mapper:
             self.ptm_info = self.ptm_info.drop(['Gene','Transcript','Modification'], axis = 1)
             self.ptm_info = self.ptm_info.drop_duplicates()
             
-            
+
             #Map ptms to transcript and exon
             self.ptm_positions = pd.DataFrame(self.ptm_info['PTM Location (AA)'].values, index = self.ptm_info.index, columns = ['PTM Location (AA)'])
             #Map ptms to boundaries
@@ -94,10 +106,10 @@ class PTM_mapper:
             Dataframe containing gene id, transcript id, protein id, residue modified, location of residue and modification type. Each row
                 corresponds to a unique ptm
         """
-        if len(config.translator[config.translator['Transcript stable ID']==transcript_id]['Transcript stable ID'].to_list())<1: 
+        if len(config.translator[config.translator['Transcript stable ID']==transcript_id, 'Transcript stable ID'].values[0])<1: 
             ptms = None
         else:
-            uniprot_id = config.translator[config.translator['Transcript stable ID']==transcript_id]['Uniprot ID'].to_list()[0]
+            uniprot_id = config.translator[config.translator['Transcript stable ID']==transcript_id,'Uniprot ID'].values[0]
             gene_id = self.transcripts.loc[transcript_id, 'Gene stable ID']
             ptms = config.ps_api.get_PTMs(uniprot_id)
             
@@ -210,7 +222,7 @@ class PTM_mapper:
             
             
         
-    def mapPTMs_all(self):
+    def mapPTMs_all(self, PROCESSES = 1):
         """
         For all ptms in ptm_info, map to genome and save in ptm_positions 
         """
@@ -223,7 +235,7 @@ class PTM_mapper:
             results = self.mapPTM(ptm)
             PTM_start_in_transcript.append(results[0])
             found_in_exon.append(results[1])
-            found_in_exon_rank.append(results[2]
+            found_in_exon_rank.append(results[2])
             exon_codon_start.append(results[3])
             gene_codon_start.append(results[4])
             
@@ -415,8 +427,8 @@ class PTM_mapper:
         pos = int(self.ptm_info.loc[ptm,'position'])
         
         #get exon cuts and convert to amino acids
-        exon_id = int(self.ptm_info.loc[ptm, 'Exon']
-        distances = [if pos <= cut abs(pos - cut) else abs(pos - cut) - 1 for cut in aa_cuts]
+        exon_id = int(self.ptm_info.loc[ptm, 'Exon'])
+        distances = [abs(pos - cut) if pos <= cut else abs(pos - cut) - 1 for cut in aa_cuts]
         min_distance = min(distances)
         
         int_distances = []
