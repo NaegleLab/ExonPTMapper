@@ -64,7 +64,7 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 	end = time.time()
 	print('Elapsed time:',end -start,'\n')
 	
-	
+    
 	#add gene id to transcripts dataframe
 	transcripts.index = transcripts['Transcript stable ID']
 	gene_ids = exons[['Gene stable ID', 'Transcript stable ID']].drop_duplicates()
@@ -74,8 +74,42 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 	gene_ids = gene_ids.loc[list(overlapping_trans)]
 	transcripts.loc[gene_ids.index.values, 'Gene stable ID'] = gene_ids['Gene stable ID']
 	
-		
-	if config.available_transcripts is None:
+	return exons, transcripts
+    
+def getGeneInfo(exons, transcripts, gene_seqs):
+    """
+    After running processExons, get gene-specific information, such as gene sequence, whether it contains multiple exons, whether it codes for protein, etc.
+    """
+    print('Finding single exon genes')
+    start = time.time()
+    #get all exon cuts for each transcript
+    tmp = transcripts['Exon cuts'].apply(lambda x: x[1:-1].split(','))
+    #identify transcripts with single exon cut (only one exon in gene)
+    single_exon_transcripts = tmp[tmp.apply(len) == 1].index.values
+    transcripts['Single Exon Transcript'] = False
+    transcripts.loc[single_exon_transcripts, 'Single Exon Transcript'] = True
+    single_exon_genes = transcripts.groupby('Gene stable ID')['Single Exon Transcript'].all()
+    gene_seqs['Single Exon Gene'] = single_exon_genes
+    end = time.time()
+    print('Elapsed Time:',end-start,'\n')
+    
+    print('Finding genes with at least one transcript with mapped coding sequence')
+    start = time.time()
+    #identify all transcripts with coding sequence
+    coding_transcripts = transcripts[transcripts['coding seq'] != 'Sequenceunavailable']
+    #identify genes associated with at least one coding transcript
+    coding_genes = coding_transcripts['Gene stable ID'].unique()
+    #record genes with coding sequence in genes dataframe
+    gene_seqs['Coding Gene'] = False
+    coding_genes = [gene for gene in coding_genes if gene in gene_seqs.index.values]
+    gene_seqs.loc[coding_genes, 'Coding Gene'] = True
+    stop = time.time()
+    print('Elapsed time:',end-start,'\n')
+    return gene_seqs
+    
+
+def getMatchedTransripts(transcripts, update = False):	
+	if config.available_transcripts is None or update:
 		print('Finding available transcripts')
 		start = time.time()
 		#get transcripts whose amino acid sequences are identifical in proteomeScoute and GenCode
@@ -95,44 +129,8 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 			json.dump(config.available_transcripts, f, indent=2) 
 		end = time.time()
 		print('Elapsed time:',end-start, '\n')
-		
-		#find location of exon in gene
-	if unspliced_gene is not None:
-		print('Finding location of Exon in Gene')
-		start = time.time()
-		#exons['Exon Start (Gene)'], exons['Exon End (Gene)'] = exons.apply(findExonInGene, axis = 1, args = (unspliced_gene))
-		exons['Exon Start (Gene)'], exons['Exon End (Gene)'] = findExonInGene(exons, unspliced_gene)
-		end = time.time()
-		print('Elapsed time:',end -start,'\n')
-		
-		print('Finding single exon genes')
-		start = time.time()
-		#get all exon cuts for each transcript
-		tmp = transcripts['Exon cuts'].apply(lambda x: x[1:-1].split(','))
-		#identify transcripts with single exon cut (only one exon in gene)
-		single_exon_transcripts = tmp[tmp.apply(len) == 1].index.values
-		transcripts['Single Exon Transcript'] = False
-		transcripts.loc[single_exon_transcripts, 'Single Exon Transcript'] = True
-		single_exon_genes = transcripts.groupby('Gene stable ID')['Single Exon Transcript'].all()
-		unspliced_gene['Single Exon Gene'] = single_exon_genes
-		end = time.time()
-		print('Elapsed Time:',end-start,'\n')
-		
-		print('Finding genes with at least one transcript with mapped coding sequence')
-		start = time.time()
-		#identify all transcripts with coding sequence
-		coding_transcripts = transcripts[transcripts['coding seq'] != 'Sequenceunavailable']
-		#identify genes associated with at least one coding transcript
-		coding_genes = coding_transcripts['Gene stable ID'].unique()
-		#record genes with coding sequence in genes dataframe
-		unspliced_gene['Coding Gene'] = False
-		coding_genes = [gene for gene in coding_genes if gene in unspliced_gene.index.values]
-		unspliced_gene.loc[coding_genes, 'Coding Gene'] = True
-		stop = time.time()
-		print('Elapsed time:',end-start,'\n')  
-		return exons, transcripts, unspliced_gene
-	
-	return exons, transcripts
+	else:
+		print('Already have the available transcripts. If you would like to update analysis, set update=True')
 
 def exonlength(row):
 	exon = row['seq']
