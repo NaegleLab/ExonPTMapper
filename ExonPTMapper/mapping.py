@@ -94,10 +94,10 @@ class PTM_mapper:
             Dataframe containing gene id, transcript id, protein id, residue modified, location of residue and modification type. Each row
                 corresponds to a unique ptm
         """
-        if len(config.translator[config.translator['Transcript stable ID']==transcript_id]['Transcript stable ID'].to_list())<1: 
+        if len(config.translator[config.translator['Transcript stable ID']==transcript_id]['Transcript stable ID'].values[0])<1: 
             ptms = None
         else:
-            uniprot_id = config.translator[config.translator['Transcript stable ID']==transcript_id]['Uniprot ID'].to_list()[0]
+            uniprot_id = config.translator[config.translator['Transcript stable ID']==transcript_id]['Uniprot ID'].values[0]
             gene_id = self.transcripts.loc[transcript_id, 'Gene stable ID']
             ptms = config.ps_api.get_PTMs(uniprot_id)
             
