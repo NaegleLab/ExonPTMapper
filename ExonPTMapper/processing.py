@@ -181,6 +181,65 @@ def getMatchedTransripts(transcripts, update = False):
 	else:
 		print('Already have the available transcripts. If you would like to update analysis, set update=True')
 
+def getExonSeq(exon, transcripts):
+    """
+    Given the processed exon and transcript dataframes 
+    """
+    #make sure exon has associated transcript, if not return Missing Transcript Info
+    try:
+        transcript = transcripts.loc[exon['Transcript stable ID']]
+    except KeyError:
+        return 'Missing Transcript Info', 'Missing Transcript Info'
+    full_aa_seq = transcript['Amino Acid Seq']
+    #If coding sequence not available for transcript, indicate
+    if transcript['CDS Start'] == 'error:no match found' or isinstance(transcript['Amino Acid Seq'], float):
+        return 'No coding seq', 'No coding seq'
+    #check to where exon starts in coding sequence (outside of coding sequence, at protein start, with ragged end, or in middle)
+    if exon['Exon End (Transcript)'] <= int(transcript['CDS Start']):
+        return "5' NCR", "5' NCR"
+    elif exon['Exon End (Transcript)'] - int(transcript['CDS Start']) == 1 or exon['Exon End (Transcript)'] - int(transcript['CDS Start']) == 2:
+        #for rare case where exon only partially encodes for the starting amino acid
+        return full_aa_seq[0]+'*'
+    elif exon['Exon Start (Transcript)'] <= int(transcript['CDS Start']):
+        exon_prot_start = 0.0
+    else:
+        exon_prot_start = (exon['Exon Start (Transcript)'] - int(transcript['CDS Start']))/3
+        
+    exon_prot_end = (exon['Exon End (Transcript)']-1 - int(transcript['CDS Start']))/3
+    if exon['Exon Start (Transcript)'] > int(transcript['CDS Start'])+len(transcript['coding seq']):
+        return "3' NCR", "3' NCR"
+    # in some cases a stop codon is present in the middle of the coding sequence: this is designed to catch those cases (also might be good to identify these cases)
+    elif exon['Exon Start (Transcript)'] > int(transcript['CDS Start'])+len(transcript['Amino Acid Seq'])*3:
+        return "3' NCR", "3' NCR"
+    elif exon_prot_end > float(len(transcript['Amino Acid Seq'])):
+        exon_prot_end= float(len(transcript['Amino Acid Seq']))
+    else:
+        exon_prot_end= (exon['Exon End (Transcript)']-1 - int(transcript['CDS Start']))/3 
+
+    
+    if exon_prot_start.is_integer() and exon_prot_end.is_integer():
+        aa_seq_ragged = full_aa_seq[int(exon_prot_start):int(exon_prot_end)]
+        aa_seq_nr = full_aa_seq[int(exon_prot_start):int(exon_prot_end)]
+    elif exon_prot_end.is_integer():
+        ragged_start = math.floor(exon_prot_start)
+        full_start = math.ceil(exon_prot_start)
+        aa_seq_ragged = full_aa_seq[ragged_start]+'*'+full_aa_seq[full_start:int(exon_prot_end)]
+        aa_seq_nr = full_aa_seq[full_start:int(exon_prot_end)]
+    elif exon_prot_start.is_integer():
+        ragged_stop = math.ceil(exon_prot_end)
+        full_stop = math.floor(exon_prot_end)
+        aa_seq_ragged = full_aa_seq[int(exon_prot_start):full_stop]+'*'+full_aa_seq[ragged_stop-1]
+        aa_seq_nr = full_aa_seq[int(exon_prot_start):full_stop]
+    else:
+        ragged_start = math.floor(exon_prot_start)
+        full_start = math.ceil(exon_prot_start)
+        ragged_stop = math.ceil(exon_prot_end)
+        full_stop = math.floor(exon_prot_end)
+        aa_seq_ragged = full_aa_seq[ragged_start]+'*'+full_aa_seq[full_start:full_stop]+'*'+full_aa_seq[ragged_stop-1]
+        aa_seq_nr = full_aa_seq[full_start:full_stop]
+
+    return aa_seq_ragged, aa_seq_nr
+
 def exonlength(row):
 	exon = row['seq']
 	length = len(exon)
