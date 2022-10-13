@@ -64,7 +64,7 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 	end = time.time()
 	print('Elapsed time:',end -start,'\n')
 	
-    
+	
 	#add gene id to transcripts dataframe
 	transcripts.index = transcripts['Transcript stable ID']
 	gene_ids = exons[['Gene stable ID', 'Transcript stable ID']].drop_duplicates()
@@ -75,38 +75,87 @@ def processExons(exon_sequences, exon_rank, coding_seqs, unspliced_gene = None):
 	transcripts.loc[gene_ids.index.values, 'Gene stable ID'] = gene_ids['Gene stable ID']
 	
 	return exons, transcripts
-    
+	
 def getGeneInfo(exons, transcripts, gene_seqs):
-    """
-    After running processExons, get gene-specific information, such as gene sequence, whether it contains multiple exons, whether it codes for protein, etc.
-    """
-    print('Finding single exon genes')
-    start = time.time()
-    #get all exon cuts for each transcript
-    tmp = transcripts['Exon cuts'].apply(lambda x: x[1:-1].split(','))
-    #identify transcripts with single exon cut (only one exon in gene)
-    single_exon_transcripts = tmp[tmp.apply(len) == 1].index.values
-    transcripts['Single Exon Transcript'] = False
-    transcripts.loc[single_exon_transcripts, 'Single Exon Transcript'] = True
-    single_exon_genes = transcripts.groupby('Gene stable ID')['Single Exon Transcript'].all()
-    gene_seqs['Single Exon Gene'] = single_exon_genes
-    end = time.time()
-    print('Elapsed Time:',end-start,'\n')
-    
-    print('Finding genes with at least one transcript with mapped coding sequence')
-    start = time.time()
-    #identify all transcripts with coding sequence
-    coding_transcripts = transcripts[transcripts['coding seq'] != 'Sequenceunavailable']
-    #identify genes associated with at least one coding transcript
-    coding_genes = coding_transcripts['Gene stable ID'].unique()
-    #record genes with coding sequence in genes dataframe
-    gene_seqs['Coding Gene'] = False
-    coding_genes = [gene for gene in coding_genes if gene in gene_seqs.index.values]
-    gene_seqs.loc[coding_genes, 'Coding Gene'] = True
-    stop = time.time()
-    print('Elapsed time:',end-start,'\n')
-    return gene_seqs
-    
+	"""
+	After running processExons, get gene-specific information, such as gene sequence, whether it contains multiple exons, whether it codes for protein, etc.
+	"""
+	print('Finding single exon genes')
+	start = time.time()
+	#get all exon cuts for each transcript
+	tmp = transcripts['Exon cuts'].apply(lambda x: x[1:-1].split(','))
+	#identify transcripts with single exon cut (only one exon in gene)
+	single_exon_transcripts = tmp[tmp.apply(len) == 1].index.values
+	transcripts['Single Exon Transcript'] = False
+	transcripts.loc[single_exon_transcripts, 'Single Exon Transcript'] = True
+	single_exon_genes = transcripts.groupby('Gene stable ID')['Single Exon Transcript'].all()
+	gene_seqs['Single Exon Gene'] = single_exon_genes
+	end = time.time()
+	print('Elapsed Time:',end-start,'\n')
+	
+	print('Finding genes with at least one transcript with mapped coding sequence')
+	start = time.time()
+	#identify all transcripts with coding sequence
+	coding_transcripts = transcripts[transcripts['coding seq'] != 'Sequenceunavailable']
+	#identify genes associated with at least one coding transcript
+	coding_genes = coding_transcripts['Gene stable ID'].unique()
+	#record genes with coding sequence in genes dataframe
+	gene_seqs['Coding Gene'] = False
+	coding_genes = [gene for gene in coding_genes if gene in gene_seqs.index.values]
+	gene_seqs.loc[coding_genes, 'Coding Gene'] = True
+	stop = time.time()
+	print('Elapsed time:',end-start,'\n')
+	return gene_seqs
+	
+def getProteinInfo():
+	"""
+	Process translator so to get protein specific information (collapse protein isoforms into one row.
+	"""
+	proteins = config.translator[config.translator['canonicals'] == 'canonical']
+	proteins = proteins[['Uniprot ID','Transcript stable ID']].drop_duplicates()
+	proteins = proteins.groupby('Uniprot ID').agg(','.join)
+	proteins.columns = ['Canonical Transcripts']
+
+	#get variants
+	variants = config.translator[config.translator['canonicals'] != 'canonical']
+	variants = variants[['Uniprot ID', 'Transcript stable ID']].drop_duplicates()
+	variants_grouped = variants.groupby('Uniprot ID')
+	num_variants = variants_grouped.count() + 1
+	num_variants.columns = ['Number of Uniprot Isoforms']
+	variant_trans = variants_grouped.agg(','.join)
+	variant_trans.columns = ['Alternative Transcripts']
+
+	#get the number of alternative isoforms
+
+	#add available transcripts with matching uniprot sequence
+	canonical_matches = []
+	for trans in proteins['Canonical Transcripts']:
+		match = []
+		for available in config.available_transcripts:
+			if available in trans:
+				match.append(available)
+		canonical_matches.append(','.join(match))
+	proteins['Matched Canonical Transcripts'] = canonical_matches
+
+	#add number of uniprot isoforms to dataframe, replace nan with 1 (only have the canonical)
+	proteins = proteins.merge(num_variants, left_index = True, right_index = True, how = 'left')
+	proteins.loc[proteins['Number of Uniprot Isoforms'].isna(), 'Number of Uniprot Isoforms'] = 1
+	#add alternative transcripts to dataframe
+	proteins = proteins.merge(variant_trans, left_index = True, right_index = True, how = 'left')
+
+	#add available transcripts with matching uniprot sequence
+	alternative_matches = []
+	for trans in proteins['Alternative Transcripts']:
+		match = []
+		if trans is np.nan:
+			alternative_matches.append(np.nan)
+		else:
+			for available in config.available_transcripts:
+				if available in trans:
+					match.append(available)
+			alternative_matches.append(','.join(match))
+	proteins['Matched Alternative Transcripts'] = alternative_matches
+	return proteins
 
 def getMatchedTransripts(transcripts, update = False):	
 	if config.available_transcripts is None or update:
