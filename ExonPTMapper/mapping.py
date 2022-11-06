@@ -160,7 +160,7 @@ class PTM_mapper:
 
                     #find which exon
                     exon_info = self.exons.loc[self.exons['Transcript stable ID'] == t]
-                    exon_row = (start <= exon_info['Exon End (Transcript)']) & (start >= exon_info['Exon Start (Transcript)'])
+                    exon_row = (start < exon_info['Exon End (Transcript)']) & (start >= exon_info['Exon Start (Transcript)'])
                     exon_of_interest = exon_info[exon_row]
                     exon_id.append(exon_of_interest['Exon stable ID'].values[0])
                     exon_rank.append(exon_of_interest['Exon rank'].values[0])

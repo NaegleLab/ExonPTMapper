@@ -4,7 +4,7 @@ import gzip
 import re
 import sys
 import time
-from ptm_mapping import config
+from ExonPTMapper import config
         
         
 def getEventType(gene_cstart, gene_cend, alternative_exons):
