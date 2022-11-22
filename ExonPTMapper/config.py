@@ -10,14 +10,16 @@ from Bio import SeqIO
 #update these lines as needed
 api_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research'
 ps_data_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research\ProteomeScoutAPI\proteomescout_mammalia_20220131\data.tsv'
-processed_data_dir = 'C://Users/Sam/Box/PTM_Splicing/Data/'
-translator_dir = processed_data_dir + 'uniprot_2_ensembl_id.gz'
+source_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Oct182022/ensembl_data/'
+processed_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Oct182022/processed_data_dir/'
+translator_file = 'uniprot_translator.csv'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
-if available_transcripts_file is not None:
+if os.path.isfile(available_transcripts_file):
     with open(available_transcripts_file, 'r') as f:
         available_transcripts = json.load(f)
 else:
+    print('Indicated available transcript file does not exist. Run.... \n')
     available_transcripts = None
 
 #load ProteomeScoutAPI
@@ -42,17 +44,17 @@ def getCanonicalIDs(translator, ID_type = 'Transcript'):
 ### Processing Functions ###
 def processTranslator(ensembl_translator_dir):
     #load info to translate between proteomeScout
-    translator = pd.read_csv(ensembl_translator_dir, compression = 'gzip', sep = '\t')
+    translator = pd.read_csv(ensembl_translator_dir, compression = 'gzip')
     translator.dropna(inplace = True)
-    translator= pd.concat([pd.Series(row['Entry'], row['Ensembl transcript'].split(';'))			  
-                        for _, row in translator.iterrows()]).reset_index()
-    translator.columns = ['Transcript and isoform', 'Uniprot ID']
+    #translator= pd.concat([pd.Series(row['Entry'], row['Ensembl transcript'].split(';'))			  
+    #                    for _, row in translator.iterrows()]).reset_index()
+    #translator.columns = ['Transcript and isoform', 'Uniprot ID']
     #get the transcript ID alone
-    translator['Transcript stable ID'] = translator.apply(just_transcript, axis = 1)
+    #translator['Transcript stable ID'] = translator.apply(just_transcript, axis = 1)
     #get the uniprot ID alone
-    translator['Isoform'] = translator.apply(just_isoform, axis = 1)
+    #translator['Isoform'] = translator.apply(just_isoform, axis = 1)
     #remove any empty rows
-    translator.dropna(inplace = True)
+    #translator.dropna(inplace = True)
     #indicate whether the transcript/protein is the canonical protein
     translator['canonicals'] = translator.apply(is_canonical, axis = 1)
     return translator
@@ -90,12 +92,14 @@ def is_canonical(row):
     """
     Based on the uniprot ID, label each protein as canonical or isoform
     """
-    if row['Isoform'] == '1':
-        ans = 'canonical'
-    elif row['Isoform'].split('-')[1].split(']')[0] == '1':
-        ans = 'canonical'
+    if row['UniProtKB/Swiss-Prot ID'] is np.nan:
+        ans = np.nan
+    elif row['UniProtKB isoform ID'] is np.nan:
+        ans = 'Canonical'
+    elif row['UniProtKB isoform ID'].split('-')[1] == 1:
+        ans = 'Canonical'
     else:
-        ans = 'splice variant'
+        ans = 'Alternative'
         
     return ans
     
@@ -121,17 +125,16 @@ def perfect_align(row):
 	return ans
 
 
-#load uniprot translator dataframe
-if os.path.isfile(translator_dir):
-    if '.csv' in translator_dir:
-        translator = pd.read_csv(translator_dir, index_col = 0)
-    elif '.gz' in translator_dir:
-        translator = processTranslator(translator_dir)
-    else:
-        print('Please update the translator_dir in config file to appropriate file type')
-        exit()
+#load uniprot translator dataframe, process if need be
+if os.path.isfile(processed_data_dir + translator_file):
+    translator = pd.read_csv(processed_data_dir + translator_file)
+elif os.path.isfile(source_data_dir + translator_file+'.gz'):
+    translator = pd.read_csv(source_data_dir + translator_file+'.gz')
+    if 'Uniprot Isoform' not in translator.columns:
+        translator['Uniprot Canonical'] = translator.apply(is_canonical, axis =1)
+    translator.to_csv(processed_data_dir + translator_file)
 else:
-    print('Provided translator file does not exist')
+    print('Provided translator file does not exist in source data directory or in processed data directory. Update config file.')
 
 
 
