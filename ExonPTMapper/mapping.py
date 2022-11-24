@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from Bio import SeqIO
+import os
 import gzip
 import re
 import sys
@@ -284,6 +285,7 @@ class PTM_mapper:
 
         analyzed_ptms = self.ptm_info.loc[~self.ptm_info['Exon stable ID'].isna(),['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank']]
         self.ptm_info = self.ptm_info.drop(['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank'], axis = 1)
+        results = pd.concat([analyzed_ptms, results])
         #add to ptm_info dataframe
         self.ptm_info = self.ptm_info.join(results) 
 
@@ -319,7 +321,7 @@ class PTM_mapper:
         #if multiple transcripts associated with protein, only use first transcript (should be same seq)
         if ',' in transcript:
             transcript = transcript.split(',')[0]
-        seq = self.transcripts.loc[transcript, 'Amino Acid Seq']
+        seq = self.transcripts.loc[transcript, 'Amino Acid Sequence']
         c_terminal_cut = re.search('[K|R][^P]|$K|R', seq[pos:])
         if c_terminal_cut is None:
             c_terminal_cut = len(seq)
@@ -365,7 +367,7 @@ class PTM_mapper:
         #if multiple transcripts associated with protein, only use first transcript (should be same seq)
         if ',' in transcript:
             transcript = transcript.split(',')[0]
-        protein_sequence = self.transcripts.loc[transcript, 'Amino Acid Seq']
+        protein_sequence = self.transcripts.loc[transcript, 'Amino Acid Sequence']
         if pos <= flank_size:
             #if amino acid does not have long enough N-terminal flanking sequence, add spaces to cushion sequence
             spaces = ''.join([' ' for i in range(flank_size - pos + 1)])
@@ -404,7 +406,7 @@ class PTM_mapper:
         -------
         indicates the location of the ptm in the coded transcript (by residue)
         """
-        full_seq = str(self.transcripts.loc[self.transcripts['Transcript stable ID'] == transcript_id, 'amino acid seq'].values[0])
+        full_seq = str(self.transcripts.loc[self.transcripts['Transcript stable ID'] == transcript_id, 'Amino Acid Sequence'].values[0])
         flank_len = (len(flank_seq)-1)/2
         match = re.search(str(flank_seq), full_seq)
         if match:
@@ -478,28 +480,75 @@ class PTM_mapper:
             indicates the number of residues from the closest splice boundary
         """
         #get ptm position (residues)
-        pos = int(self.ptm_info.loc[ptm,'PTM Location (AA)'])
-        if self.ptm_info.loc[ptm, 'In Exon Rank'].split(',')[0] != 'transcript not found':
-            rank = int(self.ptm_info.loc[ptm, 'In Exon Rank'].split(',')[0])
-        
-            #get exon cuts and convert to amino acids
-            transcript_id = self.ptm_info.loc[ptm, 'Transcripts'].split(',')[0]
-            #add 0 to list to indicate start of transcript
-            nc_cuts = [0]+self.transcripts.loc[transcript_id, 'Exon cuts'].split('[')[1].split(']')[0].split(',')
+        exon_pos = float(self.ptm_info.loc[ptm,'Exon Location (AA)'])
+        exon_id = self.ptm_info.loc[ptm, 'Exon stable ID'].split(',')
+        if any([True if (i != 'Exons Not Found' and i != 'No coding seq') else False for i in exon_id]):
             
-            #get n and c-terminal cuts, convert to residue location
-            nc_cuts = [nc_cuts[rank-1],nc_cuts[rank]]
-            cds_start = self.transcripts.loc[transcript_id, 'Relative CDS Start (bp)']
-            nc_pos = Prot_to_RNA(pos, cds_start)
-            #aa_cuts = [RNA_to_Prot(cut, cds_start) for cut in nc_cuts]
-            #calculate distance between PTM and closest N-terminal splice boundary
-            n_distance = nc_pos - int(nc_cuts[0])
-            #calculate distance between PTM and closest C-terminal splice boundary
-            c_distance = int(nc_cuts[1]) - nc_pos
+            for i in range(len(exon_id)):
+                if exon_id[i] != 'Exons Not Found' and exon_id[i] != 'No coding seq':
+                    index = i
+                    break
+                
+            exon_id = exon_id[index]
+            try:
+                exon_start = float(self.exons.loc[self.exons['Exon stable ID'] == exon_id, 'Exon Start (Protein)'].values[0])
+                exon_end = float(self.exons.loc[self.exons['Exon stable ID'] == exon_id, 'Exon End (Protein)'].values[0])
+            except:
+                return np.nan, np.nan
+            n_term = exon_pos - exon_start
+            c_term = exon_end - exon_pos
         
-            return n_distance, c_distance
+            return n_term, c_term
         else:
             return np.nan, np.nan
+        
+        
+    #def distance_to_boundary(self, ptm):
+    #    """
+    #    Find the number of residues between the indicated ptm and the closest splice boundary
+    #    
+    #    Parameters
+    #    ----------
+    #    ptm: str
+    #        ptm to get flanking sequence, indicated by 'SubstrateID_SiteNum'
+    #    aa_cuts: list of floats
+    #        location of splice boundaries (based on amino acids)
+    #    
+    #    Returns
+    #    -------
+    #    min_distance: float
+    #        indicates the number of residues from the closest splice boundary
+    #    """
+    #    #get ptm position (residues)
+    #    pos = int(self.ptm_info.loc[ptm,'PTM Location (AA)'])
+    #    ranks = self.ptm_info.loc[ptm, 'Exon Rank'].split(',')
+    #    if any([True if rank != 'Exons Not Found' else False for rank in ranks]):
+    #        
+    #        for i in range(len(ranks)):
+    #            if ranks[i] != 'Exons Not Found':
+    #                index = i
+    #                break
+    #            
+    #        rank = int(ranks[index])
+    #    
+    #        #get exon cuts and convert to amino acids
+    #        transcript_id = self.ptm_info.loc[ptm, 'Transcripts'].split(',')[index]
+    #        #add 0 to list to indicate start of transcript
+    #        nc_cuts = [0]+self.transcripts.loc[transcript_id, 'Exon cuts'].split(',')
+    #        
+    #        #get n and c-terminal cuts, convert to residue location
+    #        nc_cuts = [nc_cuts[rank-1],nc_cuts[rank]]
+    #        cds_start = self.transcripts.loc[transcript_id, 'Relative CDS Start (bp)']
+    #        nc_pos = Prot_to_RNA(pos, cds_start)
+    #        #aa_cuts = [RNA_to_Prot(cut, cds_start) for cut in nc_cuts]
+    #        #calculate distance between PTM and closest N-terminal splice boundary
+    #        n_distance = nc_pos - int(nc_cuts[0])
+    #        #calculate distance between PTM and closest C-terminal splice boundary
+    #        c_distance = int(nc_cuts[1]) - nc_pos
+    #    
+    #        return n_distance, c_distance
+    #    else:
+    #        return np.nan, np.nan
         
     def boundary_analysis(self):
         """
