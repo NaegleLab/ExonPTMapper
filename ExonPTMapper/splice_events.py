@@ -4,6 +4,7 @@ import gzip
 import re
 import sys
 import time
+from tqdm import tqdm
 from ExonPTMapper import config
         
         
@@ -63,9 +64,11 @@ def getEventType(gene_cstart, gene_cend, alternative_exons):
             three_prime = gene_cend == int(alternative_exons.loc[j, 'Exon End (Gene)'])
             if not five_prime and not three_prime:
                 event = "3' and 5' ASS"
-                impacted_region = [(gene_astart,gene_cstart),(gene_cend, gene_aend)]
+                alt_exon = alternative_exons.loc[j, 'Exon stable ID']
+                impacted_region = [(gene_astart,gene_cstart),(gene_cend,gene_aend)]
             elif not five_prime:
                 event = "5' ASS"
+                alt_exon = alternative_exons.loc[j, 'Exon stable ID']
                 if gene_astart < gene_cstart:
                     impacted_region = (gene_astart,gene_cstart)
                     atype = 'gain'
@@ -74,11 +77,12 @@ def getEventType(gene_cstart, gene_cend, alternative_exons):
                     atype = 'loss'
             elif not three_prime:
                 event = "3' ASS"
+                alt_exon = alternative_exons.loc[j, 'Exon stable ID']
                 if gene_aend < gene_cend:
-                    impacted_region = (gene_aend, gene_cend)
+                    impacted_region = (gene_aend,gene_cend)
                     atype = 'loss'
                 else:
-                    impacted_region = (gene_cend, gene_aend)
+                    impacted_region = (gene_cend,gene_aend)
                     atype = 'gain'
             else:
                 event = 'unclear'
@@ -86,17 +90,19 @@ def getEventType(gene_cstart, gene_cend, alternative_exons):
         #check to make sure exons haven't passed canonical
         elif gene_cend < gene_astart:
             event = 'skipped'
-            impacted_region = (gene_cstart, gene_cend)
+            alt_exon = np.nan
+            impacted_region = (gene_cstart,gene_cend)
             atype = 'unclear'
             break
         
         #If there is no overlap (based on location in genome) between the canonical exon and the alternative exons, event is skipped
         if event is None:
             event = 'skipped'
-            impacted_region = (gene_cstart, gene_cend)
+            alt_exon = np.nan
+            impacted_region = (gene_cstart,gene_cend)
             atype = 'unclear'
             
-    return event, impacted_region, atype
+    return event, impacted_region, atype, alt_exon
 
 def mapTranscriptToProt(transcript_info, transcript_range):
     """
@@ -121,23 +127,23 @@ def mapTranscriptToProt(transcript_info, transcript_range):
         last amino acid in the region. These could be fractional values if start of transcript is in the middle of a codon
     """
     #can only calculate if coding sequence was mapped to transcript, check to make sure this is true
-    if transcript_info['CDS Stop'] == 'error:no match found':
+    if transcript_info['Relative CDS Stop (bp)'] == 'error:no match found':
         protein_region = 'No coding sequence'
-    elif transcript_range[1] > int(transcript_info['CDS Stop']):       #Check if the end of the transcript region occurs after the end of the coding sequence (and extends into noncoding region)
-        if transcript_range[0] > int(transcript_info['CDS Stop']):     #Check if the start of the transcript region occurs before the end of the coding sequence. If it doesn't, whole region is noncoding
+    elif transcript_range[1] > int(transcript_info['Relative CDS Stop (bp)']):       #Check if the end of the transcript region occurs after the end of the coding sequence (and extends into noncoding region)
+        if transcript_range[0] > int(transcript_info['Relative CDS Stop (bp)']):     #Check if the start of the transcript region occurs before the end of the coding sequence. If it doesn't, whole region is noncoding
             protein_region = 'non_coding_region'
         else:
             #obtain the protein region based on known location of coding sequence, but stop protein region at the end of coding sequence
-            protein_region = ((transcript_range[0] - int(transcript_info['CDS Start']))/3, len(transcript_info['coding seq'])/3)
-    elif transcript_range[0] < int(transcript_info['CDS Start']):      #Check if the start of the transcript occurs before the start of the coding sequence (and extends into noncoding region)
-        if transcript_range[1] < int(transcript_info['CDS Start']):    #Check if the end of the transcript occurs after the start of the coding sequence. If it doesn't, whole region is noncoding.
+            protein_region = ((transcript_range[0] - int(transcript_info['Relative CDS Start (bp)']))/3, len(transcript_info['Coding Sequence'])/3)
+    elif transcript_range[0] < int(transcript_info['Relative CDS Start (bp)']):      #Check if the start of the transcript occurs before the start of the coding sequence (and extends into noncoding region)
+        if transcript_range[1] < int(transcript_info['Relative CDS Start (bp)']):    #Check if the end of the transcript occurs after the start of the coding sequence. If it doesn't, whole region is noncoding.
             protein_region = 'non_coding_region'
         else:
             #obtain the protein region based on known location of coding sequence, but start protein region at start of coding sequence
-            protein_region = (1, (transcript_range[1] - int(transcript_info['CDS Start']))/3)
+            protein_region = (1, (transcript_range[1] - int(transcript_info['Relative CDS Start (bp)']))/3)
     else:
         #obtain the protein region based on known location of coding sequence
-        protein_region = ((transcript_range[0] - int(transcript_info['CDS Start']))/3, (transcript_range[1] - int(transcript_info['CDS Start']))/3)
+        protein_region = ((transcript_range[0] - int(transcript_info['Relative CDS Start (bp)']))/3, (transcript_range[1] - int(transcript_info['Relative CDS Start (bp)']))/3)
     return protein_region
 
 
@@ -184,19 +190,28 @@ def identifySpliceEvent(canonical_exon, alternative_exons, transcripts = None):
         gene_cstart = int(canonical_exon['Exon Start (Gene)'])
         gene_cend = int(canonical_exon['Exon End (Gene)'])
         #based on location of exon determine what is the cause of missing exon (skipped, 3'ASS, 5'ASS)
-        event, impacted_region, atype = getEventType(gene_cstart, gene_cend, alternative_exons)
+        event, impacted_region, atype, alt_exon = getEventType(gene_cstart, gene_cend, alternative_exons)
         #determine the region of protein (which residues) are affected by splice event
         if event == 'skipped':
             transcript_region = (canonical_exon['Exon Start (Transcript)'], canonical_exon['Exon End (Transcript)'])
-            protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
+            if canonical_exon['Transcript stable ID'] in transcripts.index.values:
+                protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
+            else:
+                protein_region = 'transcript not found'
         elif event == "3' ASS":
             region_length = impacted_region[1] - impacted_region[0]
             transcript_region = (canonical_exon['Exon End (Transcript)']-region_length, canonical_exon['Exon End (Transcript)'])
-            protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
+            if canonical_exon['Transcript stable ID'] in transcripts.index.values:
+                protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
+            else:
+                protein_region = 'transcript not found'
         elif event == "5' ASS":
             region_length = impacted_region[1] - impacted_region[0]
             transcript_region = (canonical_exon['Exon Start (Transcript)'], canonical_exon['Exon Start (Transcript)']+region_length)
-            protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
+            if canonical_exon['Transcript stable ID'] in transcripts.index.values:
+                protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
+            else:
+                protein_region = 'transcript not found'
         elif event == "3' and 5' ASS":
             fiveprime_region_length = impacted_region[0][1]-impacted_region[0][0]   
             threeprime_region_length = impacted_region[1][1]-impacted_region[1][0]
@@ -205,8 +220,11 @@ def identifySpliceEvent(canonical_exon, alternative_exons, transcripts = None):
                 (canonical_exon['Exon End (Transcript)']-threeprime_region_length, canonical_exon['Exon End (Transcript)'])
             ]
             protein_region = []
-            for reg in transcript_region:
-                protein_region.append(mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], reg))
+            if canonical_exon['Transcript stable ID'] in transcripts.index.values:
+                for reg in transcript_region:
+                    protein_region.append(mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], reg))
+            else:
+                protein_region = 'transcript not found'
         else:
             protein_region = np.nan
     else:
@@ -216,9 +234,9 @@ def identifySpliceEvent(canonical_exon, alternative_exons, transcripts = None):
         atype = np.nan
         protein_region = np.nan
             
-    return [exon_id, event, impacted_region, atype, protein_region]
+    return [exon_id, event, alt_exon, impacted_region, atype, protein_region]
 
-def identifySpliceEvents_All(exons, proteins, transcripts, functional = True):
+def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = False):
     """
     Given all transcripts in the genome associated with functional proteins + matching protein sequences from ensemble and uniprot, identify all splice events
     that result in a unique exon id or loss of exon id from the canonical transcript (based on transcript associated with canonical uniprot protein).
@@ -248,62 +266,95 @@ def identifySpliceEvents_All(exons, proteins, transcripts, functional = True):
         - Loss/Gain: whether splice events result in loss or gain of nucleotides
         - Protein Region Affected: region of canonical protein sequence affected by splice event
     """
+    print('Removing proteins for which the associated gene codes for multiple different proteins')
+    #remove multi-protein genes from analysis
+    proteins = filterOutMultiProteinGenes(proteins, genes)
+    print('Done.\n')
+    
+    
+    print('Removing proteins with no alternative transcripts')
+    #split up alternative transcripts into list
+    proteins = proteins.dropna(subset = 'Alternative Transcripts (All)')
+    proteins['Alternative Transcripts (All)'] = proteins['Alternative Transcripts (All)'].apply(lambda x: x.split(','))
+    print('Done.\n')
+    
+    
     splice_events = []
     #iterate through all proteins in proteins dataframe
-    for prot in proteins.index:
+    for prot in tqdm(proteins.index, desc = 'Getting splice events for each protein'):
         #identify canonical transcript ID. If multiple, select the first in list
-        canonical_trans = proteins.loc[prot, 'Transcripts']
-        if isinstance(canonical_trans, list):
-            canonical_trans = canonical_trans[0]
-        elif ',' in canonical_trans:
-            canonical_trans = canonical_trans.split(',')[0]
+        canonical_trans = proteins.loc[prot, 'Canonical Transcripts']
+        if ',' in canonical_trans:
+            canonical_trans = canonical_trans.split(',')
+            for trans in canonical_trans:
+                if trans in exons['Transcript stable ID'].values:
+                    canonical_trans = trans
             
         #get exons and gene id associated with canonical transcript
         canonical_exons = exons[exons['Transcript stable ID'] == canonical_trans].sort_values(by = 'Exon rank in transcript', ascending = True)
-        gene = canonical_exons['Gene stable ID'].unique()[0]
-        
-        #extract the alternative spliced transcripts (all or only functional)
-        if functional:
-            alt_col = 'Functional Alternatively Spliced Transcripts'
+        #check to make sure there are exons
+        if canonical_exons.shape[0] == 0:
+            continue
         else:
-            alt_col = 'Alternatively Spliced Transcripts'
-        
-        #get alternative transcripts associated with canonical protein
-        alternative_trans = proteins.loc[prot, alt_col]
-        #check to makes sure alternative transcripts exist/we have data for them
-        if len(alternative_trans) != 0 and alternative_trans != 'gene not found':
-            for alt_trans in alternative_trans:
-                #check to make sure individual transcript exists
-                if len(alternative_trans[0]) > 0 and alternative_trans[0] != 'genenotfound': #####Revisit this, definitely better way to avoid problem where [''] causes errors 
-                    #get all exons associated with alternative transcript, ordered by rank in transcript
-                    alternative_exons = exons[exons['Transcript stable ID'] == alt_trans].sort_values(by = 'Exon rank in transcript', ascending = True)
-                    #rare case, but verify that gene_id is same for both alternative exon and canonical exon (alignment needs to match to get results)
-                    if alternative_exons['Gene stable ID'].unique()[0] != canonical_exons['Gene stable ID'].unique()[0]:
-                        exon_id = np.nan
-                        event = 'genes do not match'
-                        impacted_region = np.nan
-                        atype = np.nan
-                        protein_region = np.nan
-                        splice_events.append([prot, gene, canonical_trans, alt_trans, exon_id, event, impacted_region, atype, protein_region])
-                    #another rare case, but check to make sure a gene is associated with alternative exon (again, need alignment to get splice event)
-                    elif 'gene not found' in alternative_exons['Exon Start (Gene)'].unique() or 'gene not found' in canonical_exons['Exon Start (Gene)'].unique() or 'no match' in alternative_exons['Exon Start (Gene)'].unique() or 'no match' in canonical_exons['Exon Start (Gene)'].unique():
-                        exon_id = np.nan
-                        event = 'gene not found'
-                        impacted_region = np.nan
-                        atype = np.nan
-                        protein_region = np.nan
-                        splice_events.append([prot, gene, canonical_trans, alt_trans, exon_id, event, impacted_region, atype, protein_region])
-                    #all other cases, use alignment to obtain the specific splice event for each canonical exon
-                    else:
-                        for i in canonical_exons.index:
-                            #get splice event
-                            sevent = identifySpliceEvent(canonical_exons.loc[i], alternative_exons, transcripts)
-                            #add to array
-                            splice_events.append([prot, gene, canonical_trans, alt_trans]+sevent)
+            gene = canonical_exons['Gene stable ID'].unique()[0]
+            
+            #extract the alternative spliced transcripts (all or only functional)
+            if functional:
+                raise ValueError('filtering based on functionality is currently inactive. Set to functional=False')
+                alt_col = 'Functional Alternatively Spliced Transcripts'
+            else:
+                alt_col = 'Alternative Transcripts (All)'
+            
+            #get alternative transcripts associated with canonical protein
+            alternative_trans = proteins.loc[prot, alt_col]
+            #check to makes sure alternative transcripts exist/we have data for them
+            if len(alternative_trans) != 0 and alternative_trans != 'gene not found':
+                for alt_trans in alternative_trans:
+                    #check to make sure individual transcript exists
+                    if len(alt_trans) > 0 and alt_trans != 'genenotfound': #####Revisit this, definitely better way to avoid problem where [''] causes errors 
+                        #get all exons associated with alternative transcript, ordered by rank in transcript
+                        alternative_exons = exons[exons['Transcript stable ID'] == alt_trans].sort_values(by = 'Exon rank in transcript', ascending = True)
+                        #rare case, but verify that gene_id is same for both alternative exon and canonical exon (alignment needs to match to get results)
+                        if alternative_exons.shape[0] == 0:
+                            continue
+                        elif alternative_exons['Gene stable ID'].unique()[0] != canonical_exons['Gene stable ID'].unique()[0]:
+                            continue
+                        #    exon_id = np.nan
+                        #    event = 'genes do not match'
+                        #    impacted_region = np.nan
+                        #    atype = np.nan
+                        #    protein_region = np.nan
+                        #    splice_events.append([prot, gene, canonical_trans, alt_trans, exon_id, event, impacted_region, atype, protein_region])
+                        #all other cases, use alignment to obtain the specific splice event for each canonical exon
+                        else:
+                            for i in canonical_exons.index:
+                                #get splice event
+                                sevent = identifySpliceEvent(canonical_exons.loc[i], alternative_exons, transcripts)
+                                #add to array
+                                splice_events.append([prot, gene, canonical_trans, alt_trans]+sevent)
     
     #convert array into pandas dataframe
-    splice_events = pd.DataFrame(splice_events, columns = ['Protein', 'Gene','Canonical Transcript', 'Alternative Transcript', 'Exon ID (Canonical)', 'Event Type', 'Genomic Region Affected', 'Loss/Gain', 'Protein Region Affected'])
+    splice_events = pd.DataFrame(splice_events, columns = ['Protein', 'Gene','Canonical Transcript', 'Alternative Transcript', 'Exon ID (Canonical)', 'Event Type', 'Exon ID (Alternative)','Genomic Region Affected', 'Loss/Gain', 'Protein Region Affected'])
     return splice_events
+
+def filterOutMultiProteinGenes(proteins, genes):
+    multi_genes = genes[genes['Number of Associated Uniprot Proteins'] > 1].index.values
+    #convert gene ids to protein ids
+    multi_prot = []
+    #remove nan values for uniprot id
+    trim_translator = config.translator.dropna(subset = 'UniProtKB/Swiss-Prot ID')
+    for gene in multi_genes:
+        prot_ids = list(trim_translator.loc[trim_translator['Gene stable ID'] == gene, 'UniProtKB/Swiss-Prot ID'].unique())
+        if len(prot_ids) > 0:
+            #check to make sure protein id is in index (sometimes canonical protein not associated with a transcript and is not in dataframe)
+            for ids in prot_ids:
+                if ids not in proteins.index.values:
+                    prot_ids.remove(ids)
+            multi_prot = multi_prot + list(prot_ids)
+
+    proteins = proteins.drop(np.unique(multi_prot))
+    return proteins
+    
 
 
 """
