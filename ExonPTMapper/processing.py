@@ -95,6 +95,10 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
 	print(f'Fraction of transcripts that were successfully translated: {round(fraction_translated, 2)}')
 	print('Elapsed time:',end -start,'\n')
 	
+	#indicate whether transcript is canonical
+	trim_translator = config.translator['Uniprot Canonical']
+	transcripts = transcripts.merge(config.translator, on = 'Transcript stable ID', how = 'left')
+	
 	transcripts.index = transcripts['Transcript stable ID']
 	transcripts = transcripts.drop('Transcript stable ID', axis = 1)
 	
@@ -102,7 +106,7 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
 
 
 
-def getProteinInfo():
+def getProteinInfo(transcripts, genes):
 	"""
 	Process translator so to get protein specific information (collapse protein isoforms into one row.
 	"""
@@ -150,7 +154,22 @@ def getProteinInfo():
 					match.append(available)
 			alternative_matches.append(','.join(match))
 	proteins['Matched Alternative Transcripts'] = alternative_matches
+	
+	
+	#add all available alternative transcripts
+	alternative_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(','.join)
+
+	proteins['Alternative Transcripts (All)'] = alternative_transcripts
+    
+
 	return proteins
+	
+	
+def getMultiProteinGenes(genes):
+	num_uniprot = config.translator.groupby('Gene stable ID')['UniProtKB/Swiss-Prot ID'].nunique()
+	num_uniprot.name = 'Number of Associated Uniprot Proteins'
+	genes = genes.join(num_uniprot)
+	return genes
 
 def findCodingRegion(transcripts):
 	five_cut = []
@@ -266,11 +285,11 @@ def getAllExonSequences(exons, transcripts):
 		exon_seqs_nr.append(results[1])
 		exon_prot_starts.append(results[2])
 		exon_prot_ends.append(results[3])
-        
-    exons['Exon Start (Protein)'] = exon_prot_starts
-    exons['Exon End (Protein)'] = exon_prot_ends
-    exons['Exon AA Seq (Ragged)'] = aa_seq_ragged
-    exons['Exon AA Seq (Full Codon)'] = aa_seq_nr
+		
+	exons['Exon Start (Protein)'] = exon_prot_starts
+	exons['Exon End (Protein)'] = exon_prot_ends
+	exons['Exon AA Seq (Ragged)'] = aa_seq_ragged
+	exons['Exon AA Seq (Full Codon)'] = aa_seq_nr
 		
 	return exons
 
