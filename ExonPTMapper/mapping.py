@@ -95,9 +95,9 @@ class PTM_mapper:
             self.ptm_info = pd.concat(df_list).dropna(axis = 1, how = 'all')
             self.ptm_info.index = self.ptm_info['Protein']+'_'+self.ptm_info['Residue']+self.ptm_info['PTM Location (AA)'].astype(int).astype(str)
             #collapse rows with duplicate indexes, but different transcripts or modififications into a single row, with each transcript or modification seperated by comma
-            grouped_genes = self.ptm_info.groupby(level = 0)['Gene'].apply(set).apply(','.join)
+            grouped_genes = self.ptm_info.groupby(level = 0)['Gene'].apply(','.join)
             self.ptm_info['Genes'] = grouped_genes
-            grouped_transcripts = self.ptm_info.groupby(level = 0)['Transcript'].apply(set).apply(','.join)
+            grouped_transcripts = self.ptm_info.groupby(level = 0)['Transcript'].apply(','.join)
             self.ptm_info['Transcripts'] = grouped_transcripts
             grouped_mods = self.ptm_info.groupby(level = 0)['Modification'].apply(set).apply(','.join)
             self.ptm_info['Modifications'] = grouped_mods
