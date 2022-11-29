@@ -8,10 +8,10 @@ from Bio import SeqIO
 #import swifter
 
 #update these lines as needed
-api_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research'
-ps_data_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research\ProteomeScoutAPI\proteomescout_mammalia_20220131\data.tsv'
-source_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Oct182022/ensembl_data/'
-processed_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Oct182022/processed_data_dir/'
+api_dir = './'
+ps_data_dir = './ProteomeScoutAPI/proteomescout_mammalia_20220131/data.tsv'
+source_data_dir = './ensembl_data/'
+processed_data_dir = './processed_data_dir/'
 translator_file = 'uniprot_translator.csv'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
