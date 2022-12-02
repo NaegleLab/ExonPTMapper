@@ -185,6 +185,7 @@ def identifySpliceEvent(canonical_exon, alternative_exons, transcripts = None):
         region of the protein that is impacted by splice event. Could be fractional if affected region starts/stops in the middle of a codon.
     """
     exon_id = canonical_exon['Exon stable ID']
+    strand = canonical_exon['Strand']
     if exon_id not in alternative_exons['Exon stable ID'].values:
         #get location of canonical exon in gene
         gene_cstart = int(canonical_exon['Exon Start (Gene)'])
@@ -200,12 +201,18 @@ def identifySpliceEvent(canonical_exon, alternative_exons, transcripts = None):
                 protein_region = 'transcript not found'
         elif event == "3' ASS":
             region_length = impacted_region[1] - impacted_region[0]
+            #if on the reverse strand, this is actually on the 5' side of the transcript
+            if strand == -1:
+                event == "5' ASS"
+            
             transcript_region = (canonical_exon['Exon End (Transcript)']-region_length, canonical_exon['Exon End (Transcript)'])
             if canonical_exon['Transcript stable ID'] in transcripts.index.values:
                 protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
             else:
                 protein_region = 'transcript not found'
         elif event == "5' ASS":
+            if strand == -1:
+                event == "3' ASS"
             region_length = impacted_region[1] - impacted_region[0]
             transcript_region = (canonical_exon['Exon Start (Transcript)'], canonical_exon['Exon Start (Transcript)']+region_length)
             if canonical_exon['Transcript stable ID'] in transcripts.index.values:
