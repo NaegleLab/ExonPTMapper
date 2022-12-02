@@ -130,94 +130,102 @@ class PTM_mapper:
         #get necesary info
         position = self.ptm_info.loc[ptm, 'PTM Location (AA)']
         transcript_ids = self.ptm_info.loc[ptm, 'Transcripts'].split(',')
-        try:
-            if len(transcript_ids) > 1:
-                PTM_start = []
-                exon_id = []
-                exon_rank = []
-                exon_codon_start = []
-                gene_codon_start = []
-                exon_aa_start = []
-                for t in transcript_ids:
-                    if self.transcripts.loc[t, 'Relative CDS Start (bp)'] == 'error:no match found':
-                        exon_id.append('CDS fail')
-                        exon_rank.append('CDS fail')
-                        PTM_start.append('CDS fail')
-                        exon_codon_start.append('CDS fail')
-                        gene_codon_start.append('CDS fail')
-                    elif self.exons[self.exons['Transcript stable ID'] == t].shape[0] == 0:
-                        exon_id.append('Exons Not Found')
-                        exon_rank.append('Exons Not Found')
-                        PTM_start.append('Exons Not Found')
-                        exon_codon_start.append('Exons Not Found')
-                        gene_codon_start.append('Exons Not Found')
-                    else:
-                        CDS_start = int(self.transcripts.loc[t, 'Relative CDS Start (bp)'])
-                
-                        #calculate location of PTM in transcript (aa pos * 3 -3 + start of coding sequence)
-                        start = CDS_start + (position*3-3)
-                        PTM_start.append(str(start))
 
-                        #find which exon
-                        exon_info = self.exons.loc[self.exons['Transcript stable ID'] == t]
-                        exon_row = (start < exon_info['Exon End (Transcript)']) & (start >= exon_info['Exon Start (Transcript)'])
-                        exon_of_interest = exon_info[exon_row]
-                        exon_id.append(exon_of_interest['Exon stable ID'].values[0])
-                        exon_rank.append(str(exon_of_interest['Exon rank in transcript'].values[0]))
-                
-                        #find location in exon and gene
-                        exon_codon_start.append(str(start - int(exon_of_interest['Exon Start (Transcript)'].values[0])))
-                        if exon_of_interest['Exon Start (Gene)'].values[0] != 'no match' and exon_of_interest['Exon Start (Gene)'].values[0] != 'gene not found':
-                            gene_codon_start.append(str(start - int(exon_of_interest['Exon Start (Transcript)'].values[0]) + int(exon_of_interest['Exon Start (Gene)'].values[0])))
-                        else:
-                            gene_codon_start.append('not available')
-                            
-                        #find aa position in exon
-                        exon_aa_start.append(str(position - float(exon_of_interest['Exon Start (Protein)'].values[0])))
-                    
-                #convert lists to strings
-                PTM_start = ','.join(PTM_start)   
-                exon_id = ','.join(exon_id) 
-                exon_rank = ','.join(exon_rank)
-                exon_codon_start = ','.join(exon_codon_start)
-                gene_codon_start = ','.join(gene_codon_start)
-                exon_aa_start = ','.join(set(exon_aa_start))
-            else:
-                if self.transcripts.loc[transcript_ids[0], 'Relative CDS Start (bp)'] == 'error:no match found':
-                    exon_id = 'CDS fail'
-                    exon_rank = 'CDS fail'
-                    PTM_start ='CDS fail'
-                    exon_codon_start = 'CDS fail'
-                    gene_codon_start = 'CDS fail'
-                    exon_aa_start = 'CDS fail'
+        if len(transcript_ids) > 1:
+            PTM_start = []
+            exon_id = []
+            exon_rank = []
+            exon_codon_start = []
+            gene_codon_start = []
+            exon_aa_start = []
+            for t in transcript_ids:
+                if self.transcripts.loc[t, 'Relative CDS Start (bp)'] == 'error:no match found':
+                    exon_id.append('CDS fail')
+                    exon_rank.append('CDS fail')
+                    PTM_start.append('CDS fail')
+                    exon_codon_start.append('CDS fail')
+                    gene_codon_start.append('CDS fail')
+                elif self.exons[self.exons['Transcript stable ID'] == t].shape[0] == 0:
+                    exon_id.append('Exons Not Found')
+                    exon_rank.append('Exons Not Found')
+                    PTM_start.append('Exons Not Found')
+                    exon_codon_start.append('Exons Not Found')
+                    gene_codon_start.append('Exons Not Found')
                 else:
-                    CDS_start = int(self.transcripts.loc[transcript_ids[0], 'Relative CDS Start (bp)'])
-                
+                    CDS_start = int(self.transcripts.loc[t, 'Relative CDS Start (bp)'])
+            
                     #calculate location of PTM in transcript (aa pos * 3 -3 + start of coding sequence)
-                    PTM_start = CDS_start + (position*3-3)
-                
+                    start = CDS_start + (position*3-3)
+                    PTM_start.append(str(start))
 
                     #find which exon
-                    exon_info = self.exons.loc[self.exons['Transcript stable ID'] == transcript_ids[0]]
-                    exon_row = (PTM_start < exon_info['Exon End (Transcript)']) & (PTM_start >= exon_info['Exon Start (Transcript)'])
-                    exon_of_interest = exon_info[exon_row]
-                    exon_id = exon_of_interest['Exon stable ID'].values[0]
-                    exon_rank = exon_of_interest['Exon rank in transcript'].values[0]
+                    exon_info = self.exons.loc[self.exons['Transcript stable ID'] == t]
+                    exon_row = (start < exon_info['Exon End (Transcript)']) & (start >= exon_info['Exon Start (Transcript)'])
+                    exon_of_interest = exon_info[exon_row].squeeze()
+                    exon_id.append(exon_of_interest['Exon stable ID'])
+                    exon_rank.append(str(exon_of_interest['Exon rank in transcript']))
             
                     #find location in exon and gene
-                    exon_codon_start = PTM_start - int(exon_of_interest['Exon Start (Transcript)'].values[0])
-                    if exon_of_interest['Exon Start (Gene)'].values[0] != 'no match' and exon_of_interest['Exon Start (Gene)'].values[0] != 'gene not found':
-                        gene_codon_start = exon_codon_start + int(exon_of_interest['Exon Start (Gene)'].values[0])
+                    ec_start = start - int(exon_of_interest['Exon Start (Transcript)'])+1
+                    exon_codon_start.append(str(ec_start))
+                    if exon_of_interest['Exon Start (Gene)'] != 'no match' and exon_of_interest['Exon Start (Gene)'] != 'gene not found':
+                        if exon_of_interest['Strand'] == 1:
+                            gene_codon_start.append(str(ec_start - int(exon_of_interest['Exon Start (Transcript)']) + int(exon_of_interest['Exon Start (Gene)'])))
+                        else:
+                            gene_codon_start.append(str(int(exon_of_interest['Exon End (Gene)']) - ec_start))
                     else:
-                        gene_codon_start = 'not available'
-                    exon_aa_start = str(position - float(exon_of_interest['Exon Start (Protein)'].values[0]))
-        except:
-            exon_id = 'Unknown Error'
-            exon_rank = 'Unknown Error'
-            PTM_start ='Unknown Error'
-            exon_codon_start = 'Unknown Error'
-            gene_codon_start = 'Unknown Error'
-            exon_aa_start = 'Unknown Error'
+                        gene_codon_start.append('not available')
+                        
+                    #find aa position in exon
+                    if exon_of_interest['Exon Start (Protein)'] == 'Partial start codon':
+                        exon_aa_start.append('Translation error')
+                    else:
+                        exon_aa_start.append(str(position - float(exon_of_interest['Exon Start (Protein)'])))
+                
+            #convert lists to strings
+            PTM_start = ','.join(PTM_start)   
+            exon_id = ','.join(exon_id) 
+            exon_rank = ','.join(exon_rank)
+            exon_codon_start = ','.join(exon_codon_start)
+            gene_codon_start = ','.join(gene_codon_start)
+            exon_aa_start = ','.join(set(exon_aa_start))
+        else:
+            if self.transcripts.loc[transcript_ids[0], 'Relative CDS Start (bp)'] == 'error:no match found':
+                exon_id = 'CDS fail'
+                exon_rank = 'CDS fail'
+                PTM_start ='CDS fail'
+                exon_codon_start = 'CDS fail'
+                gene_codon_start = 'CDS fail'
+                exon_aa_start = 'CDS fail'
+            else:
+                CDS_start = int(self.transcripts.loc[transcript_ids[0], 'Relative CDS Start (bp)'])
+            
+                #calculate location of PTM in transcript (aa pos * 3 -3 + start of coding sequence)
+                PTM_start = CDS_start + (position*3-3)
+            
+
+                #find which exon
+                exon_info = self.exons.loc[self.exons['Transcript stable ID'] == transcript_ids[0]]
+                exon_row = (PTM_start < exon_info['Exon End (Transcript)']) & (PTM_start >= exon_info['Exon Start (Transcript)'])
+                exon_of_interest = exon_info[exon_row].squeeze()
+                exon_id = exon_of_interest['Exon stable ID']
+                exon_rank = exon_of_interest['Exon rank in transcript']
+        
+                #find location in exon and gene
+                exon_codon_start = PTM_start - int(exon_of_interest['Exon Start (Transcript)'])+1
+                if exon_of_interest['Exon Start (Gene)'] != 'no match' and exon_of_interest['Exon Start (Gene)'] != 'gene not found':
+                    #check if gene is on forward or reverse strand (impacts meaning of coordinates)
+                    if exon_of_interest['Strand'] == 1:
+                        gene_codon_start = exon_codon_start + int(exon_of_interest['Exon Start (Gene)'])
+                    else:
+                        gene_codon_start = int(exon_of_interest['Exon End (Gene)']) - exon_codon_start
+                else:
+                    gene_codon_start = 'not available'
+                if exon_of_interest['Exon Start (Protein)'] == 'Partial start codon':
+                    exon_aa_start = 'Translation error'
+                else:
+                    exon_aa_start = str(position - float(exon_of_interest['Exon Start (Protein)']))
+
         
         return pd.Series(data = [gene_codon_start, PTM_start, exon_codon_start, exon_aa_start, exon_id, exon_rank],
                         index = ['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank'],
@@ -243,7 +251,7 @@ class PTM_mapper:
             results = []
             iteration = 1
             #check if mapping has been run previously
-            if 'Exon stable ID' in self.ptm_info.columns and ~restart:
+            if 'Exon stable ID' in self.ptm_info.columns and not restart:
                 print('Found data from previous runs. Only analyzing rows without exon information. If you would like to analyze all ptms, set restart = True.\n')
                 #get ptms that still need to be analyzed and those that already have been
                 ptms_for_analysis = self.ptm_info[self.ptm_info['Exon stable ID'].isna()].index
@@ -294,13 +302,30 @@ class PTM_mapper:
         self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
 
             
-    def explode_PTMinfo(explode_cols = ['Gene stable ID', 'Transcript stable ID']):
+    def explode_PTMinfo(self, explode_cols = ['Genes', 'Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon Rank']):
         exploded_ptms = self.ptm_info.copy()
+        #check columns that exist
+        explode_cols = [col for col in explode_cols in col in exploded_ptms.columns.values]
+        #split different entries
         for col in explode_cols:
-            exploded_ptms[col] = exploded_cols.apply(lambda x: x.split(','))
+            exploded_ptms[col] = exploded_ptms[col].apply(lambda x: x.split(','))
       
         exploded_ptms = exploded_ptms.explode(explode_cols)
         return exploded_ptms
+        
+    def collapse_PTMinfo(self, all_cols = ['Genes', 'Transcripts','Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)','Exon stable ID', 'Exon Rank'], unique_cols = ['Modifications', 'Exon Location (AA)', 'Protein', 'PTM Location (AA)', 'Residue']):
+        ptms = self.ptm_info.copy()
+        ptms = ptms.astype(str)
+        grouped_mods = ptms.groupby(level = 0)
+        collapsed_ptms = []
+        for col in self.ptm_info.columns:
+            if col in unique_cols:
+                collapsed_ptms.append(grouped_mods[col].apply(set).apply(','.join))
+            else:
+                collapsed_ptms.append(grouped_mods[col].apply(','.join))
+        collapsed_ptms = pd.concat(collapsed_ptms, axis = 1)
+        return collapsed_ptms
+
         
     def getTrypticFragment(self, ptm):
         """
@@ -316,7 +341,7 @@ class PTM_mapper:
         seq: str
             tryptic fragment sequence
         """
-        pos = self.ptm_info.loc[ptm, 'PTM Location (AA)']
+        pos = int(self.ptm_info.loc[ptm, 'PTM Location (AA)'])
         transcript = self.ptm_info.loc[ptm, 'Transcripts']
         #if multiple transcripts associated with protein, only use first transcript (should be same seq)
         if ',' in transcript:
@@ -362,7 +387,7 @@ class PTM_mapper:
         flank_seq: str
             flanking sequence around the ptm of interest
         """
-        pos = self.ptm_info.loc[ptm, 'PTM Location (AA)']
+        pos = int(self.ptm_info.loc[ptm, 'PTM Location (AA)'])
         transcript = self.ptm_info.loc[ptm, 'Transcripts']
         #if multiple transcripts associated with protein, only use first transcript (should be same seq)
         if ',' in transcript:
@@ -435,7 +460,7 @@ class PTM_mapper:
             if in domain, indicates the type of domain. If not in domain, returns np.nan.
         """
         protein = self.ptm_info.loc[ptm, 'Protein']
-        pos = self.ptm_info.loc[ptm, 'PTM Location (AA)']
+        pos = int(self.ptm_info.loc[ptm, 'PTM Location (AA)'])
         domains = config.ps_api.get_domains(protein, 'uniprot')
         inDomain = False
         domain_type = np.nan
