@@ -137,10 +137,10 @@ def getProteinInfo(transcripts, genes):
 	proteins['Matched Canonical Transcripts'] = canonical_matches
 
 	#add number of uniprot isoforms to dataframe, replace nan with 1 (only have the canonical)
-	proteins = proteins.merge(num_variants, left_index = True, right_index = True, how = 'left')
+	proteins = proteins.merge(num_variants, left_index = True, right_index = True, how = 'outer')
 	proteins.loc[proteins['Number of Uniprot Isoforms'].isna(), 'Number of Uniprot Isoforms'] = 1
 	#add alternative transcripts to dataframe
-	proteins = proteins.merge(variant_trans, left_index = True, right_index = True, how = 'left')
+	proteins = proteins.merge(variant_trans, left_index = True, right_index = True, how = 'outer')
 
 	#add available transcripts with matching uniprot sequence
 	alternative_matches = []
@@ -160,7 +160,7 @@ def getProteinInfo(transcripts, genes):
 	alternative_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(','.join)
 
 	proteins['Alternative Transcripts (All)'] = alternative_transcripts
-    
+	
 
 	return proteins
 	
@@ -212,7 +212,7 @@ def getMatchedTranscripts(transcripts, update = False):
 	else:
 		print('Already have the available transcripts. If you would like to update analysis, set update=True')
 
-def getExonSeq(exon, transcripts):
+def getExonCodingInfo(exon, transcripts):
 	"""
 	Given the processed exon and transcript dataframes 
 	"""
@@ -228,6 +228,8 @@ def getExonSeq(exon, transcripts):
 	elif transcript['Relative CDS Start (bp)'] == 'error:no available transcript sequence':
 		return 'No transcript seq', 'No transcript seq', 'No transcript seq', 'No transcript seq'
 	#check to where exon starts in coding sequence (outside of coding sequence, at protein start, with ragged end, or in middle)
+	#coding_start = int(transcript['Relative CDS Start (bp)'])-int(exon['Exon Start (Transcript'])
+	#coding_end = int(transcript['Relative CDS Stop (bp)']) - int(exon['Exon Start (Transcript)'])
 	if int(exon['Exon End (Transcript)']) <= int(transcript['Relative CDS Start (bp)']):
 		return "5' NCR", "5' NCR", "5' NCR", "5' NCR"
 	elif int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']) == 1 or int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']) == 2:
@@ -243,7 +245,7 @@ def getExonSeq(exon, transcripts):
 		return "3' NCR", "3' NCR", "3' NCR", "3' NCR"
 	# in some cases a stop codon is present in the middle of the coding sequence: this is designed to catch those cases (also might be good to identify these cases)
 	elif exon['Exon Start (Transcript)'] > int(transcript['Relative CDS Start (bp)'])+len(transcript['Amino Acid Sequence'])*3:
-		return "3' NCR", "3' NCR", "3' NCR", "3' NCR"
+		return  "3' NCR", "3' NCR", "3' NCR", "3' NCR"
 	elif exon_prot_end > float(len(transcript['Amino Acid Sequence'])):
 		exon_prot_end= float(len(transcript['Amino Acid Sequence']))
 	else:
@@ -280,12 +282,16 @@ def getAllExonSequences(exons, transcripts):
 	exon_prot_ends = []
 	for e in range(exons.shape[0]):
 		exon = exons.iloc[e]
-		results = getExonSeq(exon, transcripts)
-		exon_seqs_ragged.append(results[0])
-		exon_seqs_nr.append(results[1])
-		exon_prot_starts.append(results[2])
-		exon_prot_ends.append(results[3])
-		
+		results = getExonCodingInfo(exon, transcripts)
+        #coding_starts.append(results[0])
+        #coding_ends.append(results[1])
+		exon_seqs_ragged.append(results[2])
+		exon_seqs_nr.append(results[3])
+		exon_prot_starts.append(results[4])
+		exon_prot_ends.append(results[5])
+	
+    #exons['Exon Coding Start (bp)'] = coding_starts
+    #exons['Exon Coding Stop (bp)']
 	exons['Exon Start (Protein)'] = exon_prot_starts
 	exons['Exon End (Protein)'] = exon_prot_ends
 	exons['Exon AA Seq (Ragged)'] = aa_seq_ragged
