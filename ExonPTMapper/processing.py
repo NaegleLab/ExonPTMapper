@@ -160,7 +160,7 @@ def getProteinInfo(transcripts, genes):
 	proteins['Gene stable IDs'] = prot_genes.apply(','.join)
 	prot_genes = prot_genes.explode().reset_index()
 
-	alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(','.join).reset_index()
+	alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(set).reset_index()
 	prot_genes = pd.merge(prot_genes,alt_transcripts, on = 'Gene stable ID', how = 'left')
 
 	nonunique_genes = genes[genes['Number of Associated Uniprot Proteins'] > 1].index
@@ -169,7 +169,7 @@ def getProteinInfo(transcripts, genes):
 	prot_genes.index = prot_genes['UniProtKB/Swiss-Prot ID']
 	prot_genes = prot_genes.drop('UniProtKB/Swiss-Prot ID', axis = 1)
 	prot_genes['Unique Gene'] = prot_genes['Unique Gene'].replace(np.nan, 'Yes')
-	proteins['Alternative Transcripts (All)'] = prot_genes.dropna(subset = 'Transcript stable ID').groupby('UniProtKB/Swiss-Prot ID')['Transcript stable ID'].apply(','.join)
+	proteins['Alternative Transcripts (All)'] = prot_genes.dropna(subset = 'Transcript stable ID').groupby('UniProtKB/Swiss-Prot ID')['Transcript stable ID'].apply(set).apply(','.join)
 	proteins['Unique Gene'] = prot_genes.groupby('UniProtKB/Swiss-Prot ID')['Unique Gene'].apply(set).apply(','.join)
 	
 	return proteins
