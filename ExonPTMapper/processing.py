@@ -156,12 +156,22 @@ def getProteinInfo(transcripts, genes):
 	proteins['Matched Alternative Transcripts'] = alternative_matches
 	
 	
-	#add all available alternative transcripts
-	alternative_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(','.join)
+	prot_genes = config.translator.groupby('UniProtKB/Swiss-Prot ID')['Gene stable ID'].apply(set)
+	proteins['Gene stable IDs'] = prot_genes.apply(','.join)
+	prot_genes = prot_genes.explode().reset_index()
 
-	proteins['Alternative Transcripts (All)'] = alternative_transcripts
+	alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(','.join).reset_index()
+	prot_genes = pd.merge(prot_genes,alt_transcripts, on = 'Gene stable ID', how = 'left')
+
+	nonunique_genes = genes[genes['Number of Associated Uniprot Proteins'] > 1].index
+	nonunique_genes = pd.DataFrame({'Unique Gene':np.repeat('No', len(nonunique_genes)), 'Gene stable ID':nonunique_genes})
+	prot_genes = prot_genes.merge(nonunique_genes, on = 'Gene stable ID', how = 'left')
+	prot_genes.index = prot_genes['UniProtKB/Swiss-Prot ID']
+	prot_genes = prot_genes.drop('UniProtKB/Swiss-Prot ID', axis = 1)
+	prot_genes['Unique Gene'] = prot_genes['Unique Gene'].replace(np.nan, 'Yes')
+	proteins['Alternative Transcripts (All)'] = prot_genes.dropna(subset = 'Transcript stable ID').groupby('UniProtKB/Swiss-Prot ID')['Transcript stable ID'].apply(','.join)
+	proteins['Unique Gene'] = prot_genes.groupby('UniProtKB/Swiss-Prot ID')['Unique Gene'].apply(set).apply(','.join)
 	
-
 	return proteins
 	
 	
@@ -245,7 +255,7 @@ def getExonCodingInfo(exon, transcripts):
 		return "3' NCR", "3' NCR", "3' NCR", "3' NCR"
 	# in some cases a stop codon is present in the middle of the coding sequence: this is designed to catch those cases (also might be good to identify these cases)
 	elif exon['Exon Start (Transcript)'] > int(transcript['Relative CDS Start (bp)'])+len(transcript['Amino Acid Sequence'])*3:
-		return  "3' NCR", "3' NCR", "3' NCR", "3' NCR"
+		return	"3' NCR", "3' NCR", "3' NCR", "3' NCR"
 	elif exon_prot_end > float(len(transcript['Amino Acid Sequence'])):
 		exon_prot_end= float(len(transcript['Amino Acid Sequence']))
 	else:
@@ -283,15 +293,15 @@ def getAllExonSequences(exons, transcripts):
 	for e in range(exons.shape[0]):
 		exon = exons.iloc[e]
 		results = getExonCodingInfo(exon, transcripts)
-        #coding_starts.append(results[0])
-        #coding_ends.append(results[1])
+		#coding_starts.append(results[0])
+		#coding_ends.append(results[1])
 		exon_seqs_ragged.append(results[2])
 		exon_seqs_nr.append(results[3])
 		exon_prot_starts.append(results[4])
 		exon_prot_ends.append(results[5])
 	
-    #exons['Exon Coding Start (bp)'] = coding_starts
-    #exons['Exon Coding Stop (bp)']
+	#exons['Exon Coding Start (bp)'] = coding_starts
+	#exons['Exon Coding Stop (bp)']
 	exons['Exon Start (Protein)'] = exon_prot_starts
 	exons['Exon End (Protein)'] = exon_prot_ends
 	exons['Exon AA Seq (Ragged)'] = aa_seq_ragged
