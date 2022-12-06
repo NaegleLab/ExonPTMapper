@@ -12,7 +12,7 @@ from ExonPTMapper import config
 
 
 class PTM_mapper:
-    def __init__(self, exons, transcripts, ptm_info = None):
+    def __init__(self, exons, transcripts, proteins, ptm_info = None):
         """
         Class for identifying relevant information about PTMs, and maps them to corresponding exons, transcripts, and genes
         
@@ -32,6 +32,7 @@ class PTM_mapper:
         """
         self.exons = exons
         self.transcripts = transcripts
+        self.proteins = proteins
         #self.transcripts.index = transcripts['Transcript stable ID']
         
         #identify available transcripts for PTM analysis (i.e. those that match in gencode and PS)
@@ -170,7 +171,7 @@ class PTM_mapper:
                     exon_codon_start.append(str(ec_start))
                     if exon_of_interest['Exon Start (Gene)'] != 'no match' and exon_of_interest['Exon Start (Gene)'] != 'gene not found':
                         if exon_of_interest['Strand'] == 1:
-                            gene_codon_start.append(str(ec_start - int(exon_of_interest['Exon Start (Transcript)']) + int(exon_of_interest['Exon Start (Gene)'])))
+                            gene_codon_start.append(str(ec_start + int(exon_of_interest['Exon Start (Gene)'])))
                         else:
                             gene_codon_start.append(str(int(exon_of_interest['Exon End (Gene)']) - ec_start))
                     else:
@@ -297,7 +298,7 @@ class PTM_mapper:
         #add to ptm_info dataframe
         self.ptm_info = self.ptm_info.join(results) 
 
-        
+        self.ptm_info = self.ptm_info.drop_duplicates()
         print('All data analyzed: saving full ptm_info results')
         self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
 
@@ -305,7 +306,7 @@ class PTM_mapper:
     def explode_PTMinfo(self, explode_cols = ['Genes', 'Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon Rank']):
         exploded_ptms = self.ptm_info.copy()
         #check columns that exist
-        explode_cols = [col for col in explode_cols in col in exploded_ptms.columns.values]
+        explode_cols = [col for col in explode_cols if col in exploded_ptms.columns.values]
         #split different entries
         for col in explode_cols:
             exploded_ptms[col] = exploded_ptms[col].apply(lambda x: x.split(','))
@@ -601,11 +602,12 @@ class PTM_mapper:
 def load_PTMmapper():
     exons = pd.read_csv(config.processed_data_dir + 'exons.csv')
     transcripts = pd.read_csv(config.processed_data_dir + 'transcripts.csv', index_col = 0)
+    proteins = pd.read_csv(config.processed_data_dir + 'proteins.csv', index_col = 0)
     if os.path.exists(config.processed_data_dir + 'ptm_info.csv'):
         ptm_info = pd.read_csv(config.processed_data_dir + 'ptm_info.csv',index_col = 0)
-        mapper = PTM_mapper(exons, transcripts, ptm_info)
+        mapper = PTM_mapper(exons, transcripts, proteins,ptm_info)
     else:
-        mapper = PTM_mapper(exons, transcripts)
+        mapper = PTM_mapper(exons, transcripts, proteins)
     #ptm_positions = pd.read_csv(config.processed_data_dir + 'ptm_positions.csv', index_col = 0)
     #ptms_all = pd.concat([ptm_info, ptm_positions], axis = 1)
     #ptms_all = ptms_all.loc[:,~ptms_all.columns.duplicated()]
