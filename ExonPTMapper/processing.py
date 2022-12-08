@@ -160,7 +160,7 @@ def getProteinInfo(transcripts, genes):
 	proteins['Gene stable IDs'] = prot_genes.apply(','.join)
 	prot_genes = prot_genes.explode().reset_index()
 
-	alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(set).reset_index()
+	alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(','.join).reset_index()
 	prot_genes = pd.merge(prot_genes,alt_transcripts, on = 'Gene stable ID', how = 'left')
 
 	nonunique_genes = genes[genes['Number of Associated Uniprot Proteins'] > 1].index
