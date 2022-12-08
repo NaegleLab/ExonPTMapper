@@ -42,8 +42,10 @@ def getEventType(gene_cstart, gene_cend, alternative_exons):
     """
     event = None
     impacted_region = None
+    alt_exon = None
     atype = None
     #iterate through exons in alternative transcript
+    strand = alternative_exons['Strand'].values[0]
     for j in alternative_exons.index:
         #get location of exon source (in gene)
         gene_astart = int(alternative_exons.loc[j, 'Exon Start (Gene)'])
@@ -56,6 +58,7 @@ def getEventType(gene_cstart, gene_cend, alternative_exons):
         if len(difference) == 0:
             event = 'No Difference'
             impacted_region = np.nan
+            alt_exon = alternative_exons.loc[j, 'Exon stable ID']
             atype = np.nan
             break
         #For cases where similarity is not perfect, but there is overlap in exons, determine where the difference occurs
@@ -88,11 +91,11 @@ def getEventType(gene_cstart, gene_cend, alternative_exons):
                 event = 'unclear'
             break
         #check to make sure exons haven't passed canonical
-        elif gene_cend < gene_astart:
+        elif (gene_cend < gene_astart and strand == 1) or (gene_cstart > gene_aend and strand == -1):
             event = 'skipped'
             alt_exon = np.nan
             impacted_region = (gene_cstart,gene_cend)
-            atype = 'unclear'
+            atype = 'loss'
             break
         
         #If there is no overlap (based on location in genome) between the canonical exon and the alternative exons, event is skipped
@@ -100,7 +103,7 @@ def getEventType(gene_cstart, gene_cend, alternative_exons):
             event = 'skipped'
             alt_exon = np.nan
             impacted_region = (gene_cstart,gene_cend)
-            atype = 'unclear'
+            atype = 'loss'
             
     return event, impacted_region, atype, alt_exon
 
@@ -203,25 +206,32 @@ def identifySpliceEvent(canonical_exon, alternative_exons, transcripts = None):
             region_length = impacted_region[1] - impacted_region[0]
             #if on the reverse strand, this is actually on the 5' side of the transcript
             if strand == -1:
-                event == "5' ASS"
-            
-            transcript_region = (canonical_exon['Exon End (Transcript)']-region_length, canonical_exon['Exon End (Transcript)'])
+                event = "5' ASS"
+                transcript_region = (canonical_exon['Exon Start (Transcript)'], canonical_exon['Exon Start (Transcript)']+region_length)
+            else:
+                transcript_region = (canonical_exon['Exon End (Transcript)']-region_length, canonical_exon['Exon End (Transcript)'])
             if canonical_exon['Transcript stable ID'] in transcripts.index.values:
                 protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
             else:
                 protein_region = 'transcript not found'
         elif event == "5' ASS":
-            if strand == -1:
-                event == "3' ASS"
             region_length = impacted_region[1] - impacted_region[0]
-            transcript_region = (canonical_exon['Exon Start (Transcript)'], canonical_exon['Exon Start (Transcript)']+region_length)
+            if strand == -1:
+                event = "3' ASS"
+                transcript_region = transcript_region = (canonical_exon['Exon End (Transcript)']-region_length, canonical_exon['Exon End (Transcript)'])
+            else:
+                transcript_region = (canonical_exon['Exon Start (Transcript)'], canonical_exon['Exon Start (Transcript)']+region_length)
             if canonical_exon['Transcript stable ID'] in transcripts.index.values:
                 protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
             else:
                 protein_region = 'transcript not found'
         elif event == "3' and 5' ASS":
-            fiveprime_region_length = impacted_region[0][1]-impacted_region[0][0]   
-            threeprime_region_length = impacted_region[1][1]-impacted_region[1][0]
+            if strand == 1:
+                fiveprime_region_length = impacted_region[0][1]-impacted_region[0][0]   
+                threeprime_region_length = impacted_region[1][1]-impacted_region[1][0]
+            else:
+                fiveprime_region_length = impacted_region[1][1]-impacted_region[1][0]   
+                threeprime_region_length = impacted_region[0][1]-impacted_region[0][0]
             transcript_region = [
                 (canonical_exon['Exon End (Transcript)'], canonical_exon['Exon End (Transcript)']+fiveprime_region_length),
                 (canonical_exon['Exon End (Transcript)']-threeprime_region_length, canonical_exon['Exon End (Transcript)'])
@@ -238,6 +248,7 @@ def identifySpliceEvent(canonical_exon, alternative_exons, transcripts = None):
         #if exon id is still in alternative transcript, exon is conserved
         event = 'conserved'
         impacted_region = np.nan
+        alt_exon = np.nan
         atype = np.nan
         protein_region = np.nan
             
@@ -291,54 +302,106 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
     for prot in tqdm(proteins.index, desc = 'Getting splice events for each protein'):
         #identify canonical transcript ID. If multiple, select the first in list
         canonical_trans = proteins.loc[prot, 'Canonical Transcripts']
-        if ',' in canonical_trans:
-            canonical_trans = canonical_trans.split(',')
-            for trans in canonical_trans:
-                if trans in exons['Transcript stable ID'].values:
-                    canonical_trans = trans
-            
-        #get exons and gene id associated with canonical transcript
-        canonical_exons = exons[exons['Transcript stable ID'] == canonical_trans].sort_values(by = 'Exon rank in transcript', ascending = True)
-        #check to make sure there are exons
-        if canonical_exons.shape[0] == 0:
-            continue
-        else:
-            gene = canonical_exons['Gene stable ID'].unique()[0]
-            
-            #extract the alternative spliced transcripts (all or only functional)
-            if functional:
-                raise ValueError('filtering based on functionality is currently inactive. Set to functional=False')
-                alt_col = 'Functional Alternatively Spliced Transcripts'
+        if isinstance(canonical_trans, str):
+            if ',' in canonical_trans:
+                canonical_trans = canonical_trans.split(',')
+                for trans in canonical_trans:
+                    if trans in exons['Transcript stable ID'].values:
+                        canonical_trans = trans
+                
+            #get exons and gene id associated with canonical transcript
+            canonical_exons = exons[exons['Transcript stable ID'] == canonical_trans].sort_values(by = 'Exon rank in transcript', ascending = True)
+            #check to make sure there are exons
+            if canonical_exons.shape[0] == 0:
+                continue
             else:
-                alt_col = 'Alternative Transcripts (All)'
-            
-            #get alternative transcripts associated with canonical protein
-            alternative_trans = proteins.loc[prot, alt_col]
-            #check to makes sure alternative transcripts exist/we have data for them
-            if len(alternative_trans) != 0 and alternative_trans != 'gene not found':
-                for alt_trans in alternative_trans:
-                    #check to make sure individual transcript exists
-                    if len(alt_trans) > 0 and alt_trans != 'genenotfound': #####Revisit this, definitely better way to avoid problem where [''] causes errors 
-                        #get all exons associated with alternative transcript, ordered by rank in transcript
-                        alternative_exons = exons[exons['Transcript stable ID'] == alt_trans].sort_values(by = 'Exon rank in transcript', ascending = True)
-                        #rare case, but verify that gene_id is same for both alternative exon and canonical exon (alignment needs to match to get results)
-                        if alternative_exons.shape[0] == 0:
-                            continue
-                        elif alternative_exons['Gene stable ID'].unique()[0] != canonical_exons['Gene stable ID'].unique()[0]:
-                            continue
-                        #    exon_id = np.nan
-                        #    event = 'genes do not match'
-                        #    impacted_region = np.nan
-                        #    atype = np.nan
-                        #    protein_region = np.nan
-                        #    splice_events.append([prot, gene, canonical_trans, alt_trans, exon_id, event, impacted_region, atype, protein_region])
-                        #all other cases, use alignment to obtain the specific splice event for each canonical exon
-                        else:
-                            for i in canonical_exons.index:
-                                #get splice event
-                                sevent = identifySpliceEvent(canonical_exons.loc[i], alternative_exons, transcripts)
-                                #add to array
-                                splice_events.append([prot, gene, canonical_trans, alt_trans]+sevent)
+                gene = canonical_exons['Gene stable ID'].unique()[0]
+                
+                #extract the alternative spliced transcripts (all or only functional)
+                if functional:
+                    raise ValueError('filtering based on functionality is currently inactive. Set to functional=False')
+                    alt_col = 'Functional Alternatively Spliced Transcripts'
+                else:
+                    alt_col = 'Alternative Transcripts (All)'
+                
+                #get alternative transcripts associated with canonical protein
+                alternative_trans = proteins.loc[prot, alt_col]
+                #check to makes sure alternative transcripts exist/we have data for them
+                if len(alternative_trans) != 0 and alternative_trans != 'gene not found':
+                    for alt_trans in alternative_trans:
+                        #check to make sure individual transcript exists
+                        if len(alt_trans) > 0 and alt_trans != 'genenotfound': #####Revisit this, definitely better way to avoid problem where [''] causes errors 
+                            #get all exons associated with alternative transcript, ordered by rank in transcript
+                            alternative_exons = exons[exons['Transcript stable ID'] == alt_trans].sort_values(by = 'Exon rank in transcript', ascending = True)
+                            #rare case, but verify that gene_id is same for both alternative exon and canonical exon (alignment needs to match to get results)
+                            if alternative_exons.shape[0] == 0:
+                                continue
+                            elif alternative_exons['Gene stable ID'].unique()[0] != canonical_exons['Gene stable ID'].unique()[0]:
+                                continue
+                            #    exon_id = np.nan
+                            #    event = 'genes do not match'
+                            #    impacted_region = np.nan
+                            #    atype = np.nan
+                            #    protein_region = np.nan
+                            #    splice_events.append([prot, gene, canonical_trans, alt_trans, exon_id, event, impacted_region, atype, protein_region])
+                            #all other cases, use alignment to obtain the specific splice event for each canonical exon
+                            else:
+                                canonical_exon_ID = []
+                                ## Initialize set that holds location of gene
+                                canonical_exon_range_list = []
+                                for index, row in canonical_exons.iterrows():
+                                    canonical_exon_range_list = canonical_exon_range_list + list(range(int(row["Exon Start (Gene)"]),int(row["Exon End (Gene)"])))
+                                
+                                canonical_exon_range_list = set(canonical_exon_range_list)
+                                for i in canonical_exons.index:
+                                    #get splice event
+                                    sevent = identifySpliceEvent(canonical_exons.loc[i], alternative_exons, transcripts)
+                                    
+                                    if sevent[1] == 'skipped':#1. Grab skipped Exon
+                                        cgene_start = sevent[3][0]
+                                        cgene_end = sevent[3][1]
+                                        ## Preprocess and drop any information that does not have the location of the exon 
+                                        alternative_exons = alternative_exons[alternative_exons["Exon Start (Gene)"] != 'no match']
+                                        # 2. Search for upstream and down stream
+                                        alternative_exons["Cgene Start Difference"] =cgene_start - alternative_exons["Exon End (Gene)"].apply(int)
+                                        alternative_exons["Cgene End Difference"] = alternative_exons["Exon Start (Gene)"].apply(int) - cgene_end
+                                        downstream_exon =  alternative_exons[alternative_exons["Cgene Start Difference"] > 0]
+                                        if downstream_exon.shape[0] > 0:
+                                            downstream_exon = downstream_exon.loc[[downstream_exon['Cgene Start Difference'].idxmin()]]
+                                                                                    #4. Check if there is overlap 
+                                            downstream_exon_location = set(list(range(int(downstream_exon["Exon Start (Gene)"]), int(downstream_exon["Exon End (Gene)"]))))
+                                            downstream_intersection = len(canonical_exon_range_list.intersection(downstream_exon_location))
+                                        else:
+                                            downstream_intersection = None
+                                        
+
+                                        upstream_exon =  alternative_exons[alternative_exons["Cgene End Difference"] > 0]
+                                        if upstream_exon.shape[0] > 0:
+                                            upstream_exon = upstream_exon.loc[[upstream_exon['Cgene End Difference'].idxmin()]]
+                                            upstream_exon_location = set(list(range(int(upstream_exon["Exon Start (Gene)"]), int(upstream_exon["Exon End (Gene)"]))))
+                                            upstream_intersection = len(canonical_exon_range_list.intersection(upstream_exon_location))
+                                        else:
+                                            upstream_intersection = None
+                                        #3. Check if in canonical
+                                        sum_of_up_down = sum(downstream_exon["Exon stable ID"].isin(canonical_exons["Exon stable ID"])) + sum(upstream_exon["Exon stable ID"].isin(canonical_exons["Exon stable ID"]))
+
+                                        if sum_of_up_down < 2 and (upstream_intersection == 0 and downstream_intersection == 0):
+                                            sevent[1] = 'two MXE'
+                                        if sum_of_up_down < 2 and upstream_intersection == 0: 
+                                            upstream_end = int(upstream_exon['Exon End (Gene)'])
+                                            if not ((canonical_exons['Exon End (Gene)'].astype(int) < upstream_end) & (canonical_exons['Exon End (Gene)'].astype(int) > canonical_exons.loc[i,'Exon End (Gene)'])).any():
+                                                sevent[1] = "mixed"
+                                                sevent[2] = upstream_exon['Exon stable ID'].values[0]
+                                                sevent[4] = 'unclear'
+                                        elif sum_of_up_down < 2 and downstream_intersection == 0:
+                                            downstream_start = int(downstream_exon['Exon End (Gene)'])
+                                            if not ((canonical_exons['Exon Start (Gene)'].astype(int) > downstream_start) & (canonical_exons['Exon Start (Gene)'].astype(int) < canonical_exons.loc[i,'Exon Start (Gene)'])).any():
+                                                sevent[1] = 'mixed'
+                                                sevent[2] = downstream_exon['Exon stable ID'].values[0]
+                                                sevent[4] = 'unclear'
+                                            
+                                    #add to array
+                                    splice_events.append([prot, gene, canonical_trans, alt_trans]+sevent)
     
     #convert array into pandas dataframe
     splice_events = pd.DataFrame(splice_events, columns = ['Protein', 'Gene','Canonical Transcript', 'Alternative Transcript', 'Exon ID (Canonical)', 'Event Type', 'Exon ID (Alternative)','Genomic Region Affected', 'Loss/Gain', 'Protein Region Affected'])
