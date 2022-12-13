@@ -100,7 +100,7 @@ class PTM_mapper:
             self.ptm_info['Genes'] = grouped_genes
             grouped_transcripts = self.ptm_info.groupby(level = 0)['Transcript'].apply(','.join)
             self.ptm_info['Transcripts'] = grouped_transcripts
-            grouped_mods = self.ptm_info.groupby(level = 0)['Modification'].apply(set).apply(','.join)
+            grouped_mods = self.ptm_info.groupby(level = 0)['Modification'].apply(set).apply(';'.join)
             self.ptm_info['Modifications'] = grouped_mods
             self.ptm_info = self.ptm_info.drop(['Gene','Transcript','Modification'], axis = 1)
             self.ptm_info = self.ptm_info.drop_duplicates()
