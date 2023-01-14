@@ -7,6 +7,7 @@ import gzip
 import re
 import sys
 import math
+import pybiomart
 from ExonPTMapper import config
 import time
 #import swifter
@@ -20,9 +21,48 @@ Need 3 file types downloaded from_ensembl (can only download limited information
 
 ****Would likely be useful to have code for pulling from ensembl rather than just file types
 """
-def processExons(exon_sequences, exon_info):
+
+def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_name', 'strand','start_position','end_position', 'chromosome_name', 'uniprotswissprot'],
+							transcript_attributes = ['ensembl_gene_id','ensembl_transcript_id','transcript_length','transcript_appris', 'transcript_is_canonical'],
+							exon_attributes = ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_exon_id', 'is_constitutive','rank','exon_chrom_start', 'exon_chrom_end'],
+							filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'}):
+							
+	#initialize ensembl dataset
+	dataset = pybiomart.Dataset(name='hsapiens_gene_ensembl',host='http://www.ensembl.org')
+			   
+	#download gene info
+	print('Downloading and processing gene-specific meta information')
+	genes = dataset.query(attributes=gene_attributes,filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'})
+	genes = genes.dropna(subset = 'UniProtKB/Swiss-Prot ID')
+	genes = collapseGenesByProtein(genes)
+	print('saving\n')
+	genes.to_csv(config.processed_data_dir + 'genes.csv')
+	
+	#download transcript info
+	print('Downloading and processing transcript-specific meta information')
+	transcripts = dataset.query(attributes=transcript_attributes,
+				 filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'})
+	transcripts.index = transcripts['Transcript stable ID']
+	transcripts = transcripts.drop('Transcript stable ID', axis = 1)
+	transcripts = transcripts.drop_duplicates()
+	print('saving\n')
+	transcripts.to_csv(config.processed_data_dir + 'transcripts.csv')
+
+	#download exon info
+	print('Downloading and processing exon-specific meta information')
+	exons = dataset.query(attributes=exon_attributes,
+				 filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'})
+	exons = exons.rename({'Exon region start (bp)':'Exon Start (Gene)', 'Exon region end (bp)':'Exon End (Gene)'}, axis = 1)
+	print('saving\n')
+	exons.to_csv(config.processed_data_dir + 'exons.csv', index = False)
+	
+	return genes, transcripts, exons
+
+
+
+def processExons(exon_info, exon_sequences):
 	#load exon specific information and compile into one data structure
-	exons = pd.merge(exon_info, exon_sequences, on ='Exon stable ID', how = 'left')
+	exons = pd.merge(exon_info, exon_sequences, on ='Exon stable ID', how = 'right')
 	
 	print('converting exon information into transcript information')
 	#use exon information above to compile transcript sequences
@@ -96,8 +136,8 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
 	print('Elapsed time:',end -start,'\n')
 	
 	#indicate whether transcript is canonical
-	trim_translator = config.translator['Uniprot Canonical']
-	transcripts = transcripts.merge(config.translator, on = 'Transcript stable ID', how = 'left')
+	trim_translator = config.translator[['Transcript stable ID', 'Uniprot Canonical']].drop_duplicates()
+	transcripts = transcripts.merge(trim_translator, on = 'Transcript stable ID', how = 'left')
 	
 	transcripts.index = transcripts['Transcript stable ID']
 	transcripts = transcripts.drop('Transcript stable ID', axis = 1)
@@ -175,10 +215,21 @@ def getProteinInfo(transcripts, genes):
 	return proteins
 	
 	
-def getMultiProteinGenes(genes):
+def collapseGenesByProtein(genes):
+	#calculate the number of isoforms per 
 	num_uniprot = config.translator.groupby('Gene stable ID')['UniProtKB/Swiss-Prot ID'].nunique()
 	num_uniprot.name = 'Number of Associated Uniprot Proteins'
-	genes = genes.join(num_uniprot)
+	
+	#get the isoform ids
+	proteins_from_gene = genes.groupby('Gene stable ID')['UniProtKB/Swiss-Prot ID'].apply(','.join)
+	proteins_from_gene.name = 'Associated Uniprot Proteins'
+	
+	genes.index = genes['Gene stable ID']
+	genes = genes.drop('Gene stable ID', axis = 1)
+	genes = genes.join([num_uniprot, proteins_from_gene])
+	#remove single protein id column from dataframe and drop duplicates
+	genes = genes.drop('UniProtKB/Swiss-Prot ID', axis = 1)
+	genes = genes.drop_duplicates()
 	return genes
 
 def findCodingRegion(transcripts):
@@ -207,12 +258,19 @@ def getMatchedTranscripts(transcripts, update = False):
 		start = time.time()
 		#get transcripts whose amino acid sequences are identifical in proteomeScoute and GenCode
 		seq_align = config.translator.dropna(subset = 'UniProtKB/Swiss-Prot ID')
+		#record the total number of transcripts
+		num_transcripts = seq_align.shape[0]
+		
+		#determine if ensembl and proteomescout information matches
 		seq_align['PS Seq'] = seq_align.apply(get_ps_seq, axis= 1)
 		seq_align['GENCODE Seq'] = get_gencode_seq(seq_align, transcripts)
 		seq_align['Exact Match'] = seq_align.apply(perfect_align, axis=1)
 		perfect_matches = seq_align[seq_align['Exact Match']==True]
 		# if the transcript is a perfect match, 
 		# then take PTMs assigned to it and track to exon
+		
+		#indicate how many transcripts matched
+		print(f'{num_transcripts} found associated with canonical UniProt proteins.\n {round(perfect_matches.shape[0]/num_transcripts*100, 2)}% of these transcripts match sequence information in ProteomeScout.')
 		
 		config.available_transcripts = perfect_matches['Transcript stable ID'].tolist()
 		with open(config.processed_data_dir+"available_transcripts.json", 'w') as f:
@@ -295,24 +353,24 @@ def getAllExonSequences(exons, transcripts):
 		results = getExonCodingInfo(exon, transcripts)
 		#coding_starts.append(results[0])
 		#coding_ends.append(results[1])
-		exon_seqs_ragged.append(results[2])
-		exon_seqs_nr.append(results[3])
-		exon_prot_starts.append(results[4])
-		exon_prot_ends.append(results[5])
+		exon_seqs_ragged.append(results[0])
+		exon_seqs_nr.append(results[1])
+		exon_prot_starts.append(results[2])
+		exon_prot_ends.append(results[3])
 	
 	#exons['Exon Coding Start (bp)'] = coding_starts
 	#exons['Exon Coding Stop (bp)']
 	exons['Exon Start (Protein)'] = exon_prot_starts
 	exons['Exon End (Protein)'] = exon_prot_ends
-	exons['Exon AA Seq (Ragged)'] = aa_seq_ragged
-	exons['Exon AA Seq (Full Codon)'] = aa_seq_nr
+	exons['Exon AA Seq (Ragged)'] = exon_seqs_ragged
+	exons['Exon AA Seq (Full Codon)'] = exon_seqs_nr
 		
 	return exons
 
 def exonlength(row, seq_col = 'Exon Sequence'):
 	exon = row[seq_col]
 	if exon is np.nan:
-		length = row['Exon end in Gene (bp)']-row['Exon start in Gene (bp)']+1
+		length = row['Exon End (Gene)']-row['Exon Start (Gene)']+1
 	else:
 		length = len(exon)
 		
