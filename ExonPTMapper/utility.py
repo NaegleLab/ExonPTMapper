@@ -1,4 +1,30 @@
 import pandas as pd
+import gzip
+from Bio import SeqIO
+
+def processEnsemblFasta(file, id_col = 'ID', seq_col = 'Seq'):
+    data_dict = {id_col:[],seq_col:[]}
+    with gzip.open(file,'rt') as handle:
+        for record in SeqIO.parse(handle, 'fasta'):
+            ids = record.id
+            seq = str(record.seq)
+            
+            data_dict[id_col].append(ids)
+            data_dict[seq_col].append(seq)
+            
+    return pd.DataFrame(data_dict)
+    
+def getUniProtCanonicalIDs(translator, ID_type = 'Transcript'):
+    """
+    Use translator to extract only the canonical proteins (either Uniprot IDs or Transcript IDs)
+    """
+    if ID_type == 'Transcript':
+        return config.translator.loc[config.translator['canonicals']=='canonical', 'Transcript stable ID'].values
+    elif ID_type == 'Protein':
+        return translator[translator['canonicals']=='canonical', 'UniProtKB/Swiss-Prot ID'].values
+    else:
+        print("Please indicate whether you want 'Transcript' or 'Protein' IDs")
+        return None
 
 def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1):
     """
@@ -42,3 +68,26 @@ def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1):
     else:
         print("Invalid loc_type. Can only be based on location in 'Gene','Exon', or 'Transcript'")
     return frame
+    
+    
+codon_dict = {'GCA':'A','GCG': 'A','GCC':'A','GCT':'A',
+              'TGT':'C','TGC':'C',
+              'GAC':'D','GAT':'D',
+              'GAA':'E','GAG':'E',
+              'TTT':'F','TTC':'F',
+              'GGA':'G','GGG':'G','GGC':'G','GGT':'G',
+              'CAC':'H','CAT':'H',
+              'ATA':'I','ATC':'I','ATT':'I',
+              'AAA':'K','AAG':'K',
+              'TTG':'L','TTA':'L','CTT':'L','CTC':'L','CTG':'L','CTA':'L',
+              'ATG':'M',
+              'AAC':'N','AAT':'N',
+              'CCA':'P','CCG':'P','CCC':'P','CCT':'P',
+              'CAA':'Q','CAG':'Q',
+              'AGG':'R','AGA':'R','CGA':'R','CGG':'R','CGC':'R','CGT':'R',
+              'TCT':'S','TCC':'S','TCG':'S','TCA':'S','AGC':'S','AGT':'S',
+              'ACA':'T','ACG':'T','ACC':'T','ACT':'T',
+              'GTA':'V','GTG':'V','GTC':'V','GTT':'V',
+              'TGG':'W',
+              'TAT':'Y','TAC':'Y',
+              'TGA':'*','TAG':'*','TAA':'*'}
