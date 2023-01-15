@@ -8,7 +8,7 @@ import sys
 import time
 import multiprocessing
 from tqdm import tqdm
-from ExonPTMapper import config, processing, utility
+from ExonPTMapper import config, processing, utility, alternative_mapping
 
 
 class PTM_mapper:
@@ -285,7 +285,7 @@ class PTM_mapper:
         self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
 
             
-    def explode_PTMinfo(self, explode_cols = ['Genes', 'Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon Rank']):
+    def explode_PTMinfo(self, explode_cols = ['Genes', 'Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon Rank', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to N-terminal Splice Boundary (NC)']):
         exploded_ptms = self.ptm_info.copy()
         #check columns that exist
         explode_cols = [col for col in explode_cols if col in exploded_ptms.columns.values]
@@ -294,6 +294,8 @@ class PTM_mapper:
             exploded_ptms[col] = exploded_ptms[col].apply(lambda x: x.split(','))
       
         exploded_ptms = exploded_ptms.explode(explode_cols)
+        exploded_ptms = exploded_ptms.reset_index()
+        exploded_ptms = exploded_ptms.rename({'index':'PTM'}, axis = 1)
         return exploded_ptms
         
     def collapse_PTMinfo(self, all_cols = ['Genes', 'Transcripts','Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)','Exon stable ID', 'Exon Rank'], unique_cols = ['Modifications', 'Exon Location (AA)', 'Protein', 'PTM Location (AA)', 'Residue']):
@@ -470,80 +472,8 @@ class PTM_mapper:
         self.ptm_info['inDomain'] = inDomain_list
         self.ptm_info['Domain Type'] = domain_type_list
         
-        
-    #def distance_to_boundary(self, ptm):
-    #    """
-    #    Find the number of residues between the indicated ptm and the closest splice boundary
-
-    #    Parameters
-    #    ----------
-    #    ptm: str
-    #        ptm to get flanking sequence, indicated by 'SubstrateID_SiteNum'
-
-    #    Returns
-    #    -------
-    #    saves distance to n_term and c_term within mapper, based on the number of nucleotides. C-term is from the start codon,
-    #    N-term is from the stop codon (assumes it is forward strand)
-    #    """
-    #    #get ptm position (residues) and exon ids
-    #    exon_pos = self.ptm_info.loc[ptm, 'Exon Location (NC)'].split(',')
-    #    exon_id = self.ptm_info.loc[ptm, 'Exon stable ID'].split(',')
-    #    #for each relevant exon_id, find the distance to boundary
-    #    #if len(exon_pos) > 1:
-    #    if True:
-    #        n_term = []
-    #        c_term = []
-    #        for pos, ids in zip(exon_pos, exon_id):
-    #            if (exon_id != 'Exons Not Found' and exon_id != 'No coding seq'):
-    #                try:
-    #                    pos = float(pos)
-    #                    exon_start = float(self.exons.loc[self.exons['Exon stable ID'] == ids, 'Exon Start (Transcript)'].values[0])
-    #                    exon_end = float(self.exons.loc[self.exons['Exon stable ID'] == ids, 'Exon End (Transcript)'].values[0])
-    #                    n_term.append(str(pos - exon_start))
-    #                    c_term.append(str(exon_end - pos + 3))
-    #                except:
-    #                    n_term.append('Missing Info')
-    #                    c_term.append('Missing Info')
-    #            else:
-    #                n_term.append('Missing Info')
-    #                c_term.append('Missing Info')
-
-    #        n_term = ','.join(n_term)
-    #        c_term = ','.join(c_term)
-    #    else:
-    #        if (exon_id != 'Exons Not Found' and exon_id != 'No coding seq'):
-    #            try:
-    #                exon_pos = float(exon_pos)
-    #                exon_start = float(self.exons.loc[self.exons['Exon stable ID'] == exon_id, 'Exon Start (Transcript)'].values[0])
-    #                exon_end = float(self.exons.loc[self.exons['Exon stable ID'] == exon_id, 'Exon End (Transcript)'].values[0])
-    #            except:
-    #            n_term = 'Missing Info'
-    #            c_term = 'Missing Info'
-    #            n_term = str(exon_pos - exon_start)
-    #            c_term = str(exon_end - exon_pos + 3)
-    #        else:
-    #            n_term = 'Missing Info'
-    #            c_term = 'Missing Info'
-    #    return n_term, c_term    
-
-        
-    #def boundary_analysis(self):
-    #    """
-    #    Find how close each ptm is to the splice boundaries
-
-    #    """
-    #    c_boundary = []
-    #    n_boundary = []
-    #    for ptm in tqdm(self.ptm_info.index, desc = 'Getting distance to boundary'):
-    #        results = self.distance_to_boundary(ptm)
-    #        n_boundary.append(results[0])
-    #        c_boundary.append(results[1])
-
-    #    self.ptm_info['Distance to N-term Boundary (NC)'] = n_boundary
-    #    self.ptm_info['Distance to C-term Boundary (NC)'] = c_boundary
-    #    #self.ptm_info['Distance to N-term Boundary (AA)'] = self.ptm_info['Distance to N-term Boundary (NC)']/3
-    #    #self.ptm_info['Distance to C-term Boundary (AA)'] = self.ptm_info['Distance to C-term Boundary (NC)']/3
-
+    def mapPTMsToAlternative(self):
+        self.alternative_ptms = alternative_mapping.mapBetweenTranscripts_all(self, results = self.alternative_ptms)
         
         
     def savePTMs(self):
@@ -582,11 +512,11 @@ class PTM_mapper:
         else:
             self.ptm_info = None
             
-        if os.path.exists(config.processed_data_dir + 'alt_ptms.csv'):
+        if os.path.exists(config.processed_data_dir + 'alternative_ptms.csv'):
             print('Loading information on PTMs on alternative proteins')
-            self.alt_ptms = pd.read_csv(config.processed_data_dir + 'alt_ptms.csv', index_col = 0)
+            self.alternative_ptms = pd.read_csv(config.processed_data_dir + 'alternative_ptms.csv')
         else:
-            self.alt_ptms = None
+            self.alternative_ptms = None
 
 
     
