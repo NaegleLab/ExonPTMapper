@@ -87,7 +87,7 @@ def mapPTMtoAlternative(self, exons, transcripts, canonical_ptm, transcript_id):
                 if coding and matched_frame:
                     #check if canonical_ptm and alternative_ptm exist at splice boundary
                     if ragged:
-                        splice_boundary = alt_exon['Exon End (Transcript)']
+                        splice_boundary = alt_exon_with_ptm['Exon End (Transcript)']
                         transcript_sequence = transcripts.loc[transcript_id, 'Transcript Sequence']
                         #calculate start location of codon in transcript
                         codon_start_in_transcript = splice_boundary - (3+dist_to_boundary)
@@ -121,7 +121,7 @@ def mapPTMtoAlternative(self, exons, transcripts, canonical_ptm, transcript_id):
                     other_contributing_exon = exons[(exons['Transcript stable ID'] == canonical_trans_id) & (exons['Exon rank in transcript'] == second_contributing_exon_rank)].squeeze()
                     loc_other_exon_in_gene = other_contributing_exon['Exon Start (Gene)']
                     alt_exon2 = alt_exons[alt_exons['Exon Start (Gene)'] == loc_other_exon_in_gene]
-                    if alt_exon2.shape[0] == 0:
+                    if alt_exon2.shape[0] == 1:
                         alt_exon2 = alt_exon2.squeeze()
                         if strand == 1:
                             #check if the other contributing exon is
