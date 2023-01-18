@@ -8,7 +8,7 @@ import sys
 import time
 import multiprocessing
 from tqdm import tqdm
-from ExonPTMapper import config, processing, utility, alternative_mapping
+from ExonPTMapper import config, processing, utility, alternative_mapping, get_splice_events
 
 
 class PTM_mapper:
@@ -312,7 +312,7 @@ class PTM_mapper:
         return collapsed_ptms
 
         
-    def getTrypticFragment(self, ptm):
+    def getTrypticFragment(self, pos, transcript_id):
         """
         Given a ptm, find the tryptic fragment you would be likely to find from mass spec (trypsin cuts at lysine or arginine (except after proline). 
         
@@ -326,11 +326,6 @@ class PTM_mapper:
         seq: str
             tryptic fragment sequence
         """
-        pos = int(self.ptm_info.loc[ptm, 'PTM Location (AA)'])
-        transcript = self.ptm_info.loc[ptm, 'Transcripts']
-        #if multiple transcripts associated with protein, only use first transcript (should be same seq)
-        if ',' in transcript:
-            transcript = transcript.split(',')[0]
         seq = self.transcripts.loc[transcript, 'Amino Acid Sequence']
         c_terminal_cut = re.search('[K|R][^P]|$K|R', seq[pos:])
         if c_terminal_cut is None:
@@ -353,10 +348,15 @@ class PTM_mapper:
         """
         fragment = []
         for ptm in tqdm(self.ptm_info.index, desc = 'Getting tryptic fragments'):
-            fragment.append(self.getTrypticFragment(ptm))
+            pos = int(self.ptm_info.loc[ptm, 'PTM Location (AA)'])
+            transcript = self.ptm_info.loc[ptm, 'Transcripts']
+            #if multiple transcripts associated with protein, only use first transcript (should be same seq)
+            if ',' in transcript:
+                transcript = transcript.split(',')[0]
+            fragment.append(self.getTrypticFragment(pos, transcript))
         self.ptm_info['Tryptic Fragment'] = fragment
         
-    def getFlankingSeq(self, ptm, flank_size = 4):
+    def getFlankingSeq(self, pos, transcript, flank_size = 4):
         """
         Get flanking sequence around the indicated PTM, with the number of residues upstream/downstream indicated by flank_size
         
@@ -372,11 +372,7 @@ class PTM_mapper:
         flank_seq: str
             flanking sequence around the ptm of interest
         """
-        pos = int(self.ptm_info.loc[ptm, 'PTM Location (AA)'])
-        transcript = self.ptm_info.loc[ptm, 'Transcripts']
         #if multiple transcripts associated with protein, only use first transcript (should be same seq)
-        if ',' in transcript:
-            transcript = transcript.split(',')[0]
         protein_sequence = self.transcripts.loc[transcript, 'Amino Acid Sequence']
         if pos <= flank_size:
             #if amino acid does not have long enough N-terminal flanking sequence, add spaces to cushion sequence
@@ -397,7 +393,12 @@ class PTM_mapper:
         """
         flanks = []
         for ptm in tqdm(self.ptm_info.index, desc = 'Get flanking sequences'):
-            flanks.append(self.getFlankingSeq(ptm, flank_size))
+            pos = int(self.ptm_info.loc[ptm, 'PTM Location (AA)'])
+            transcript = self.ptm_info.loc[ptm, 'Transcripts']
+            #if multiple transcripts associated with protein, only use first transcript (should be same seq)
+            if ',' in transcript:
+                transcript = transcript.split(',')[0]
+            flanks.append(self.getFlankingSeq(pos, transcript, flank_size))
         self.ptm_info['Flanking Sequence'] = flanks
             
         
@@ -474,7 +475,76 @@ class PTM_mapper:
         
     def mapPTMsToAlternative(self):
         self.alternative_ptms = alternative_mapping.mapBetweenTranscripts_all(self, results = self.alternative_ptms)
+    
+    def calculate_PTMconservation(self):
+        if self.alternative_ptms is None:
+            raise AttributeError('No alternative_ptms attribute. Must first map ptms to alternative transcripts with mapPTMsToAlternative()')
+        else:
+            #conserved transcripts
+            conserved_transcripts = self.alternative_ptms[self.alternative_ptms['Mapping Result'] == 'Success'].groupby('Canonical PTM')['Alternative Transcript'].apply(list)
+            num_conserved_transcripts = conserved_transcripts.apply(len)
+            conserved_transcripts = conserved_transcripts.apply(','.join)
+            
+            #lost transcripts
+            lost_transcripts = self.alternative_ptms[self.alternative_ptms['Mapping Result'] != 'Success'].groupby('Canonical PTM')['Alternative Transcript'].apply(list)
+            num_lost_transcripts = lost_transcripts.apply(len)
+            lost_transcripts = lost_transcripts.apply(','.join)
+            
+            #save results in ptm_info
+            self.ptm_info['Number of Conserved Transcripts'] = num_conserved_transcripts
+            self.ptm_info['Conserved Transcripts'] = conserved_transcripts
+            self.ptm_info['Number of Lost Transcripts'] = num_lost_transcripts
+            self.ptm_info['Lost Transcripts'] = lost_transcripts
+            
+            #calculate fraction of transcripts which have conserved PTM
+            conservation_score = []
+            for ptm in self.ptm_info.index:
+                num_conserved = self.ptm_info.loc[ptm,'Number of Conserved Transcripts']
+                num_lost = self.ptm_info.loc[ptm,'Number of Lost Transcripts']
+                #check if there are any conserved transcripts (or if not and is NaN)
+                if num_conserved != num_conserved and num_lost == num_lost:
+                    conservation_score.append(0)
+                elif num_conserved != num_conserved and num_lost != num_lost:
+                    conservation_score.append(np.nan)
+                #check if any lost transcripts: if not replace NaN with 0 when calculating
+                elif num_lost != num_lost:
+                    conservation_score.append(1)
+                else:
+                    conservation_score.append(num_conserved/(num_conserved+num_lost))
+            self.ptm_info['PTM Conservation Score'] = conservation_score
         
+    def addSpliceEventsToAlternative(self, splice_events_df):
+        splice_events_df = [['Exon ID (Canonical)', 'Alternative Transcript', 'Event Type']]
+        splice_events_df = splice_events_df.rename({'Exon ID (Canonical)': 'Canonical Exon'}, axis = 1)
+        self.alternative_ptms = self.alternative_ptms.merge(splice_events_df, on = ['Canonical Exon', 'Alternative Transcript'], how = 'left')
+    
+    def annotateAlternativePTMs(self):
+        mapper.alternative_ptms['Canonical PTM'] = mapper.alternative_ptms['Protein'] + '_' + mapper.alternative_ptms['Residue'] + mapper.alternative_ptms['Canonical Protein Location (AA)'].astype(str)
+        if 'TRIFID Score' in self.transcripts.columns:
+            self.alternative_ptms = self.alternative_ptms(self.transcripts['TRIFID Score'], right_index = True, left_on = 'Alternative Transcript', how = 'left')
+            
+        print('Calculating the rate of PTM conservation for each PTM')
+        self.calculate_PTMconservation()
+        
+        print('Getting flanking sequences around PTMs in alternative isoforms')
+        flank = []
+        for pos, transcript_id in zip(self.alternative_ptms['Alternative Protein Location (AA)'], self.alternative_ptms['Alternative Transcript']):
+            flank.append(self.getFlankingSeq(pos, transcript_id, flank_size = 10))
+        self.alternative_ptms['Flanking Sequence'] = flank
+        
+        print('Getting tryptic fragments that include each PTM in alternative isoforms')
+        tryptic = []
+        for pos, transcript_id in zip(self.alternative_ptms['Alternative Protein Location (AA)'], self.alternative_ptms['Alternative Transcript']):
+            tryptic.append(self.getTrypticFragment(pos, transcript_id))
+        self.alternative_ptms['Tryptic Fragment'] = tryptic
+        
+        if os.path.exists(config.processed_data_dir + 'splice_events.csv'):
+            sevents = pd.read_csv(config.processed_data_dir + 'splice_events.csv')
+            self.addSpliceEventsToAlternative(self, sevents)
+            
+            
+        
+            
         
     def savePTMs(self):
         self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
@@ -532,76 +602,8 @@ def Prot_to_RNA(pos, cds_start):
     """
     return (int(pos)*3 -3) + int(cds_start)
     
-    
-def getCodingRegionInGene(exon, transcript, strand):
-    exon_start = int(transcript['Relative CDS Start (bp)']) - int(exon['Exon Start (Transcript)'])
-    exon_stop = int(transcript['Relative CDS Stop (bp)']) - int(exon['Exon Start (Transcript)'])
-    #forward strand
-    if strand == 1:
-        if exon_start < 0:
-            gene_start = exon['Exon Start (Gene)']
-        else:
-            gene_start = exon['Exon Start (Gene)'] + exon_start
 
-        if exon_stop > exon['Exon Length']:
-            gene_stop = exon['Exon End (Gene)']
-        else:
-            gene_stop = exon['Exon Start (Gene)'] + exon_stop
-    #reverse strand
-    else:
-        if exon_start < 0:
-            gene_stop = exon['Exon End (Gene)']
-        else:
-            gene_stop = exon['Exon End (Gene)'] - exon_start
-        if exon_stop > exon['Exon Length']:
-            gene_start = exon['Exon Start (Gene)']
-        else:
-            gene_start = exon['Exon End (Gene)'] - exon_stop
 
-    return gene_start, gene_stop
-
-def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1):
-    """
-    given location in gene, transcript, or exon, return the location in the frame
-    
-    1 = first base pair of codon
-    2 = second base pair of codon
-    3 = third base pair of codon
-    
-    Primary motivation of the function is to determine whether the same gene location in different transcripts is found in the same reading frame
-    
-    Parameters
-    ----------
-    exon: pandas series
-        series object containing exon information for exon of interest
-    transcript: pandas series
-        series object containing transcript information related to exon of interest
-    loc: int
-        location of nucleotide to check where in frame it is located
-    loc_type: string
-        
-    """
-    if loc_type == 'Gene':
-        #calculate location of nucleotide in exon (with 0 being the first base pair of the exon). Consider whether on reverse or forward strand
-        if strand == 1:
-            loc_in_exon = loc - int(exon['Exon Start (Gene)'])
-        else:
-            loc_in_exon = exon['Exon End (Gene)'] - loc
-        #calculate location of nucleotide in transcript (with 0 being the first base pair of the entire transcript, including UTRs)
-        loc_in_transcript = loc_in_exon + int(exon['Exon Start (Transcript)'])
-        #calculate the location in the reading frame (mod returns 0 if multiple of 3 but want this to indicate first bp of a codon, so add 1)
-        frame = (loc_in_transcript - int(transcript['Relative CDS Start (bp)'])) % 3 + 1
-    elif loc_type == 'Exon':
-        #calculate location of nucleotide in transcript (with 0 being the first base pair of the entire transcript, including UTRs)
-        loc_in_transcript = loc + int(exon['Exon Start (Transcript)'])
-        #calculate the location in the reading frame (mod returns 0 if multiple of 3 but want this to indicate first bp of a codon, so add 1)
-        frame = (loc_in_transcript - int(transcript['Relative CDS Start (bp)'])) % 3 + 1
-    elif loc_type == 'Transcript':
-        #calculate the location in the reading frame (mod returns 0 if multiple of 3 but want this to indicate first bp of a codon, so add 1)
-        frame = (loc - int(transcript['Relative CDS Start (bp)'])) % 3 + 1
-    else:
-        print("Invalid loc_type. Can only be based on location in 'Gene','Exon', or 'Transcript'")
-    return frame
 
 def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fname = 'exon_sequences.fasta.gz',
                 coding_sequences_fname = 'coding_sequences.fasta.gz', trifid_fname = 'APPRIS_functionalscores.txt'):
@@ -676,5 +678,22 @@ def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fna
     print('saving\n')
     mapper.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
     
+    if mapper.alternative_ptms is None:
+        print('Mapping PTM sites onto alternative isoforms')
+        mapper.mapPTMsToAlternative()
+        print('saving\n')
+        
+    if not os.path.exists(config.processed_data_dir + 'splice_events.csv'):
+        print('Identify splice events that result in alternative isoforms')
+        splice_events_df = get_splice_events.identifySpliceEvents_All(mapper.exons, mapper.proteins, mapper.transcripts, mapper.genes)
+        priny('saving\n')
+        splice_events_df.to_csv(config.processed_data_dir + 'splice_events.csv')
+        
+    if 'Tryptic Fragment' not in mapper.alternative_ptms.columns:
+        print('Annotate PTM sites on alternative isoforms')
+        mapper.annotateAlternativePTMs()
+        print('saving\n')
+        mapper.alternative_ptms.to_csv(config.processed_data_dir + 'alternative_ptms.csv')
+        
     return mapper
     
