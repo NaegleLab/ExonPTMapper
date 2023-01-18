@@ -1,0 +1,6 @@
+pandas
+numpy
+matplotlib==3.6.0
+biopython==1.79
+pybiomart==0.2.0
+tqdm==4.64.1
