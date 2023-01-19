@@ -17,9 +17,9 @@ def mapPTMtoAlternative(self, exons, transcripts, canonical_ptm, transcript_id):
     if alt_exons.shape[0] == 0:
         map_result = 'Missing Info'
         new_ptm_position = np.nan
-        alt_exon = np.nan
+        alt_exon_id = np.nan
         conserved =np.nan
-        can_exon = np.nan
+        canonical_exon_id = np.nan
         ragged = np.nan
         canonical_ptm = canonical_ptm.iloc[0]
     else:
@@ -41,7 +41,9 @@ def mapPTMtoAlternative(self, exons, transcripts, canonical_ptm, transcript_id):
             canonical_trans_id = canonical_ptm['Transcripts']
             canonical_exon = exons[(exons['Exon stable ID'] == canonical_exon_id) & (exons['Transcript stable ID'] == canonical_trans_id)].squeeze()
             
-            
+            #check for ragged insertion
+            dist_to_boundary = canonical_ptm['Distance to C-terminal Splice Boundary (NC)']
+            ragged = dist_to_boundary < 0
         
         
             #check if gene is on forward or reverse strand
@@ -55,10 +57,6 @@ def mapPTMtoAlternative(self, exons, transcripts, canonical_ptm, transcript_id):
                 alt_exon_id = alt_exon_with_ptm['Exon stable ID']
                 conserved = alt_exon_id == canonical_exon_id
                 exon_aa_start = alt_exon_with_ptm['Exon Start (Protein)']
-
-                #check for ragged insertion
-                dist_to_boundary = canonical_ptm['Distance to C-terminal Splice Boundary (NC)']
-                ragged = dist_to_boundary < 0
 
 
                 #get location of coding start/end in each exon (in case entire exon does not code for protein). Given as [start,stop]
@@ -85,66 +83,54 @@ def mapPTMtoAlternative(self, exons, transcripts, canonical_ptm, transcript_id):
                     matched_frame = False
 
                 if coding and matched_frame:
-                    #check if canonical_ptm and alternative_ptm exist at splice boundary
-                    if ragged:
-                        splice_boundary = alt_exon_with_ptm['Exon End (Transcript)']
-                        transcript_sequence = transcripts.loc[transcript_id, 'Transcript Sequence']
-                        #calculate start location of codon in transcript
-                        codon_start_in_transcript = splice_boundary - (3+dist_to_boundary)
-                        #get new codon in alternative transcript
-                        transcript_sequence = transcripts.loc[transcript_id, 'Transcript Sequence']
-                        codon = transcript_sequence[codon_start_in_transcript:codon_start_in_transcript+3]
-                        new_residue = utility.codon_dict[codon]
-                        if new_residue != canonical_ptm['Residue']:
-                            new_ptm_position = np.nan
+
+                    # calculate new ptm position
+                    new_ptm_position = calculatePTMposition(can_coding_region, alt_coding_region, exon_aa_start, canonical_ptm['Exon Location (AA)'], conserved, strand)
+
+
+                    if transcripts.loc[transcript_id, 'Amino Acid Sequence'][new_ptm_position-1] != canonical_ptm['Residue']:
+                        if ragged:
                             map_result = 'Ragged Insertion'
+                            new_ptm_position = np.nan
                         else:
-                            new_ptm_position = calculatePTMposition(can_coding_region, alt_coding_region, exon_aa_start, canonical_ptm['Exon Location (AA)'], conserved, strand)
-                            map_result = 'Success'
-                    else:
-                        # calculate new ptm position
-                        new_ptm_position = calculatePTMposition(can_coding_region, alt_coding_region, exon_aa_start, canonical_ptm['Exon Location (AA)'], conserved, strand)
-
-
-                        if transcripts.loc[transcript_id, 'Amino Acid Sequence'][new_ptm_position-1] != canonical_ptm['Residue']:
                             map_result = 'Residue Mismatch'
                             new_ptm_position = np.nan
-                        else:
-                            map_result = 'Success'
-
-                elif ragged:
-                    #check for a potential conserved ragged site
-                    first_contributing_exon_rank = canonical_ptm['Exon Rank']
-                    second_contributing_exon_rank = first_contributing_exon_rank + 1
-                    #check if the other contributing exon to ragged site is found in transcript
-                    #start_of_other_exon_in_transcript = transcript_loc + (3 + dist_to_boundary)
-                    other_contributing_exon = exons[(exons['Transcript stable ID'] == canonical_trans_id) & (exons['Exon rank in transcript'] == second_contributing_exon_rank)].squeeze()
-                    loc_other_exon_in_gene = other_contributing_exon['Exon Start (Gene)']
-                    alt_exon2 = alt_exons[alt_exons['Exon Start (Gene)'] == loc_other_exon_in_gene]
-                    if alt_exon2.shape[0] == 1:
-                        alt_exon2 = alt_exon2.squeeze()
-                        if strand == 1:
-                            #check if the other contributing exon is
-                            start_alt_exon_in_transcript = alt_exon2['Exon Start (Transcript)']
-                            codon_start = start_alt_exon_in_transcript - (3+dist_to_boundary)
-                        else:
-                            codon_start = int(alt_exon2['Exon End (Transcript)'])
-                        print(codon_start)
-                        transcript_sequence = transcripts.loc[transcript_id, 'Transcript Sequence']
-                        codon = transcript_sequence[codon_start:codon_start+3]
-                        new_residue = utility.codon_dict[codon]
-                        if new_residue != canonical_ptm['Residue']:
-                            new_ptm_position = np.nan
-                            map_result = 'Ragged Insertion'
-                        else:
-                            new_ptm_position = (codon_start - transcripts.loc[transcript_id, 'Relative CDS Start (bp)'] + 3)/3
-                            map_result = 'Success'
-                            
                     else:
+                        map_result = 'Success'
+
+            elif ragged:
+                #check for a potential conserved ragged site
+                first_contributing_exon_rank = canonical_ptm['Exon Rank']
+                second_contributing_exon_rank = first_contributing_exon_rank + 1
+                #check if the other contributing exon to ragged site is found in transcript
+                #start_of_other_exon_in_transcript = transcript_loc + (3 + dist_to_boundary)
+                other_contributing_exon = exons[(exons['Transcript stable ID'] == canonical_trans_id) & (exons['Exon rank in transcript'] == second_contributing_exon_rank)].squeeze()
+                loc_other_exon_in_gene = other_contributing_exon['Exon Start (Gene)']
+                alt_exon2 = alt_exons[alt_exons['Exon Start (Gene)'] == loc_other_exon_in_gene]
+                if alt_exon2.shape[0] == 1:
+                    alt_exon2 = alt_exon2.squeeze()
+                    if strand == 1:
+                        #check if the other contributing exon is
+                        start_alt_exon_in_transcript = alt_exon2['Exon Start (Transcript)']
+                        codon_start = start_alt_exon_in_transcript - (3+dist_to_boundary)
+                    else:
+                        codon_start = int(alt_exon2['Exon End (Transcript)'])
+                    print(codon_start)
+                    transcript_sequence = transcripts.loc[transcript_id, 'Transcript Sequence']
+                    codon = transcript_sequence[codon_start:codon_start+3]
+                    new_residue = utility.codon_dict[codon]
+                    if new_residue != canonical_ptm['Residue']:
                         new_ptm_position = np.nan
-                        alt_exon_id = np.nan
-                        conserved = False
-                        map_result = 'Not Found'
+                        map_result = 'Ragged Insertion'
+                    else:
+                        new_ptm_position = (codon_start - transcripts.loc[transcript_id, 'Relative CDS Start (bp)'] + 3)/3
+                        map_result = 'Success'
+                        
+                else:
+                    new_ptm_position = np.nan
+                    alt_exon_id = np.nan
+                    conserved = False
+                    map_result = 'Not Found'
 
                 
 
@@ -222,7 +208,7 @@ def mapBetweenTranscripts_singleProtein(self, exons, transcripts, exploded_ptms,
         return None
     else:
         alt_trans = alt_trans.split(',')
-        ptms = np.unique(exploded_ptms.loc[exploded_ptms['Protein'] == prot_id,'index'].values)
+        ptms = np.unique(exploded_ptms.loc[exploded_ptms['Protein'] == prot_id,'PTM'].values)
         alt_ptms = []
         
     
@@ -236,7 +222,7 @@ def mapBetweenTranscripts_singleProtein(self, exons, transcripts, exploded_ptms,
                     alt_ptms = pool.starmap(mapPTMtoAlternative, iterable)
                 #else:
                 for ptm in ptms:
-                    canonical_ptm = exploded_ptms[exploded_ptms['index'] == ptm]
+                    canonical_ptm = exploded_ptms[exploded_ptms['PTM'] == ptm]
                     alt_ptms.append(mapPTMtoAlternative(self, exons, transcripts, canonical_ptm, trans))
         if len(alt_ptms) > 0:
             results = pd.concat(alt_ptms, axis = 1).T   
