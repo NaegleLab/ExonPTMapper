@@ -166,10 +166,11 @@ class plotter:
             num_attributes = 1+include_exons*1+include_domains*1
             ax[row].set_ylim([0,num_attributes])
             #check for splice boundaries in the start/stop range
-            splice_bool = np.array([cut < stop and cut >= start for cut in aa_cuts])
+            splice_bool = np.array([cut+1 < stop and cut+1 >= start for cut in aa_cuts])
             boundaries = aa_cuts[splice_bool]
             for bound in boundaries:
                 #color based on ragged or normal boundary
+                bound = bound + 1
                 if bound % 1 != 0:
                     c = 'red'
                 else:
@@ -192,8 +193,8 @@ class plotter:
             if include_exons:
                 plot_exons = coding_exons[((coding_exons['Exon Start (Protein)'].astype(float) >= start) & (coding_exons['Exon Start (Protein)'].astype(float) <= stop)) | ((coding_exons['Exon End (Protein)'].astype(float) <= stop) & (coding_exons['Exon End (Protein)'].astype(float) >= start))]
                 for i in plot_exons.index:
-                    exon_start = float(plot_exons.loc[i,'Exon Start (Protein)'])
-                    exon_end = float(plot_exons.loc[i, 'Exon End (Protein)'])
+                    exon_start = float(plot_exons.loc[i,'Exon Start (Protein)'])+1
+                    exon_end = float(plot_exons.loc[i, 'Exon End (Protein)'])+1
                     if start > exon_start:
                         exon_start = start
                     if stop < exon_end:
@@ -309,7 +310,7 @@ class plotter:
         
         #find relevant splice boundaries
         boundaries = self.transcripts.loc[transcript_id, 'Exon cuts'].split(',')
-        boundaries = [int(b) for b in boundaries if int(b) >= nc_start and int(b) <= nc_stop]
+        boundaries = [int(float(b)) for b in boundaries if int(float(b)) >= nc_start and int(float(b)) <= nc_stop]
         
         #construct figure
         if ax is None:
@@ -465,7 +466,7 @@ class plotter:
             if fiveprime >= gene_cds_start and threeprime <= gene_cds_end:
                 add_coding = True
             else: 
-                if (fiveprime < gene_cds_start and threeprime > cds_start):
+                if (fiveprime < gene_cds_start and threeprime > gene_cds_start):
                     fiveprime = gene_cds_start
                     add_coding = True
                 
@@ -498,13 +499,13 @@ class plotter:
         ax.axis('off')
         return gene_start, gene_end
 
-    def plotPTMChanges(self, ptm, alternative_transcript_id, aa_size = 26, plot_full_exons = False):
+    def plotPTMChanges(self, ptm, alternative_transcript_id, aa_size = 26, figsize = (10,4), plot_full_exons = False):
         transcript_id = self.ptm_info.loc[ptm, 'Transcripts']
         if ',' in transcript_id:
             transcript_id = transcript_id.split(',')[0]
 
         #setup subplot
-        fig, axes = plt.subplots(nrows = 3, figsize = (10,4))
+        fig, axes = plt.subplots(nrows = 3, figsize = figsize)
         fig.subplots_adjust(hspace = 0.5)
             
         nc_start, nc_stop = self.plotSequenceAroundPTM(ptm,transcript_id = transcript_id, transcript_type = 'Canonical', orientation = 'top', aa_size = aa_size, return_coordinates = True, ax = axes[0])

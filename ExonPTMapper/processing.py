@@ -29,10 +29,12 @@ def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_
 							
 	#initialize ensembl dataset
 	dataset = pybiomart.Dataset(name='hsapiens_gene_ensembl',host='http://www.ensembl.org')
-			   
+	chromosomes = ['X', '20', '1', '6', '3', '7', '12', '11', '4', '17', '2', '16',
+	   '8', '19', '9', '13', '14', '5', '22', '10', 'Y', '18', '15', '21',
+	   'MT']
 	#download gene info
 	print('Downloading and processing gene-specific meta information')
-	genes = dataset.query(attributes=gene_attributes,filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'})
+	genes = dataset.query(attributes=gene_attributes,filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding', 'chromosome_name': chromosomes})
 	genes = genes.dropna(subset = 'UniProtKB/Swiss-Prot ID')
 	genes = collapseGenesByProtein(genes)
 	print('saving\n')
@@ -41,18 +43,20 @@ def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_
 	#download transcript info
 	print('Downloading and processing transcript-specific meta information')
 	transcripts = dataset.query(attributes=transcript_attributes,
-				 filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'})
+				 filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding', 'chromosome_name':chromosomes})
 	transcripts.index = transcripts['Transcript stable ID']
 	transcripts = transcripts.drop('Transcript stable ID', axis = 1)
 	transcripts = transcripts.drop_duplicates()
+	transcripts = transcripts[transcripts['Gene stable ID'].isin(genes.index)]
 	print('saving\n')
 	transcripts.to_csv(config.processed_data_dir + 'transcripts.csv')
 
 	#download exon info
 	print('Downloading and processing exon-specific meta information')
 	exons = dataset.query(attributes=exon_attributes,
-				 filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'})
+				 filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding', 'chromosome_name':chromosomes})
 	exons = exons.rename({'Exon region start (bp)':'Exon Start (Gene)', 'Exon region end (bp)':'Exon End (Gene)'}, axis = 1)
+	exons = exons[exons['Gene stable ID'].isin(genes.index)]
 	print('saving\n')
 	exons.to_csv(config.processed_data_dir + 'exons.csv', index = False)
 	
@@ -62,15 +66,8 @@ def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_
 
 def processExons(exon_info, exon_sequences):
 	#load exon specific information and compile into one data structure
-	exons = pd.merge(exon_info, exon_sequences, on ='Exon stable ID', how = 'right')
+	exons = pd.merge(exon_info, exon_sequences, on ='Exon stable ID')
 	
-	print('converting exon information into transcript information')
-	#use exon information above to compile transcript sequences
-	start = time.time()
-	exons = exons.sort_values(by = 'Exon rank in transcript')
-	#transcripts = exons.groupby('Transcript stable ID')['seq'].apply(''.join)
-	end = time.time()
-	print('Elapsed time:', end -start, '\n')
 	
 	#add gene id to transcripts
 	print('Getting exon lengths and cuts')
@@ -97,16 +94,15 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
 	sorted_exons['Exon End (Transcript)'] = sorted_exons['Exon End (Transcript)'].astype(str)
 	transcript_cuts = sorted_exons.groupby('Transcript stable ID')['Exon End (Transcript)'].apply(','.join)
 	transcript_cuts.name = 'Exon cuts'
-	transcripts = transcripts.join([transcript_sequences, transcript_cuts])
+	transcripts = transcripts.join([transcript_cuts, transcript_sequences])
 	end = time.time()
 	print('Elapsed time:',end - start,'\n')
-
 
 	print('Finding coding sequence location in transcript')
 	#find coding sequence location in transcript
 	start = time.time()
 	#add coding sequences to transcript info
-	transcripts = pd.merge(transcripts, coding_seqs, right_on = 'Transcript stable ID',left_index = True, how = 'left')
+	transcripts = transcripts.join([coding_seqs])
 	#cds_start,cds_stop = transcripts.apply(findCodingRegion, axis = 1)
 	cds_start, cds_stop = findCodingRegion(transcripts)
 	transcripts['Relative CDS Start (bp)'] = cds_start
@@ -238,7 +234,7 @@ def findCodingRegion(transcripts):
 	for i in transcripts.index:
 		coding_sequence = transcripts.at[i,'Coding Sequence']
 		full_transcript = transcripts.at[i,'Transcript Sequence']
-		if full_transcript is not np.nan:
+		if full_transcript is not np.nan and coding_sequence is not np.nan:
 			match = re.search(coding_sequence, full_transcript)
 			if match:
 				five_cut.append(match.span()[0])
@@ -246,10 +242,13 @@ def findCodingRegion(transcripts):
 			else:
 				five_cut.append('error:no match found')
 				three_cut.append('error:no match found')
+		elif coding_sequence is not np.nan:
+			five_cut.append('error:no available coding sequence')
+			three_cut.append('error:no available coding sequence')
 		else:
 			five_cut.append('error:no available transcript sequence')
 			three_cut.append('error:no available transcript sequence')
-	
+		
 	return five_cut, three_cut
 
 def getMatchedTranscripts(transcripts, update = False):	
@@ -257,7 +256,7 @@ def getMatchedTranscripts(transcripts, update = False):
 		print('Finding available transcripts')
 		start = time.time()
 		#get transcripts whose amino acid sequences are identifical in proteomeScoute and GenCode
-		seq_align = config.translator.dropna(subset = 'UniProtKB/Swiss-Prot ID')
+		seq_align = config.translator[config.translator['Uniprot Canonical'] == 'Canonical'].copy()
 		#record the total number of transcripts
 		num_transcripts = seq_align.shape[0]
 		
@@ -280,7 +279,7 @@ def getMatchedTranscripts(transcripts, update = False):
 	else:
 		print('Already have the available transcripts. If you would like to update analysis, set update=True')
 
-def getExonCodingInfo(exon, transcripts):
+def getExonCodingInfo(exon, transcripts, strand):
 	"""
 	Given the processed exon and transcript dataframes 
 	"""
@@ -288,36 +287,46 @@ def getExonCodingInfo(exon, transcripts):
 	try:
 		transcript = transcripts.loc[exon['Transcript stable ID']]
 	except KeyError:
-		return 'Missing Transcript Info', 'Missing Transcript Info', 'Missing Transcript Info', 'Missing Transcript Info'
+		return np.repeat('Missing Transcript Info', 6)
 	full_aa_seq = transcript['Amino Acid Sequence']
 	#If coding sequence or transcript sequence not available for transcript, indicate
 	if isinstance(full_aa_seq, float) or transcript['Relative CDS Start (bp)'] == 'error:no match found':
-		return 'No coding seq', 'No coding seq', 'No coding seq', 'No coding seq'
+		return np.repeat('No coding seq', 6)
 	elif transcript['Relative CDS Start (bp)'] == 'error:no available transcript sequence':
-		return 'No transcript seq', 'No transcript seq', 'No transcript seq', 'No transcript seq'
+		return np.repeat('No transcript seq', 6)
 	#check to where exon starts in coding sequence (outside of coding sequence, at protein start, with ragged end, or in middle)
 	#coding_start = int(transcript['Relative CDS Start (bp)'])-int(exon['Exon Start (Transcript'])
 	#coding_end = int(transcript['Relative CDS Stop (bp)']) - int(exon['Exon Start (Transcript)'])
 	if int(exon['Exon End (Transcript)']) <= int(transcript['Relative CDS Start (bp)']):
-		return "5' NCR", "5' NCR", "5' NCR", "5' NCR"
+		return np.repeat("5' NCR", 6)
 	elif int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']) == 1 or int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']) == 2:
 		#for rare case where exon only partially encodes for the starting amino acid
-		return full_aa_seq[0]+'*', 'Partial start codon', 'Partial start codon', 'Partial start codon'
+		return full_aa_seq[0]+'*', 'Partial start codon', 'Partial start codon', 'Partial start codon', 'Partial start codon','Partial start codon'
 	elif exon['Exon Start (Transcript)'] <= int(transcript['Relative CDS Start (bp)']):
 		exon_prot_start = 0.0
+		if strand == 1:
+			exon_coding_start = (int(transcript['Relative CDS Start (bp)']) - exon['Exon Start (Transcript)']) + exon['Exon Start (Gene)']
+		else:
+			exon_coding_start = exon['Exon End (Gene)'] - (int(transcript['Relative CDS Start (bp)']) - exon['Exon Start (Transcript)'])
 	else:
 		exon_prot_start = (exon['Exon Start (Transcript)'] - int(transcript['Relative CDS Start (bp)']))/3
-		
-	exon_prot_end = (int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']))/3
+		exon_coding_start = exon['Exon Start (Gene)'] if strand == 1 else exon['Exon End (Gene)']
+	
+	exon_prot_end = (exon['Exon End (Transcript)'] - int(transcript['Relative CDS Start (bp)']))/3
 	if exon['Exon Start (Transcript)'] > int(transcript['Relative CDS Start (bp)'])+len(transcript['Coding Sequence']):
-		return "3' NCR", "3' NCR", "3' NCR", "3' NCR"
+		return np.repeat("3' NCR", 6)
 	# in some cases a stop codon is present in the middle of the coding sequence: this is designed to catch those cases (also might be good to identify these cases)
 	elif exon['Exon Start (Transcript)'] > int(transcript['Relative CDS Start (bp)'])+len(transcript['Amino Acid Sequence'])*3:
-		return	"3' NCR", "3' NCR", "3' NCR", "3' NCR"
+		return	np.repeat("3' NCR", 6)
 	elif exon_prot_end > float(len(transcript['Amino Acid Sequence'])):
 		exon_prot_end= float(len(transcript['Amino Acid Sequence']))
+		if strand == 1:
+			exon_coding_end = exon['Exon Start (Gene)'] + (int(transcript['Relative CDS Stop (bp)']) - exon['Exon Start (Transcript)'])
+		else:
+			exon_coding_end = exon['Exon Start (Gene)'] + (exon['Exon End (Transcript)'] - int(transcript['Relative CDS Stop (bp)']))
 	else:
 		exon_prot_end= (int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']))/3 
+		exon_coding_end = exon['Exon End (Gene)'] if strand == 1 else exon['Exon Start (Gene)']
 
 	
 	if exon_prot_start.is_integer() and exon_prot_end.is_integer():
@@ -341,22 +350,32 @@ def getExonCodingInfo(exon, transcripts):
 		aa_seq_ragged = full_aa_seq[ragged_start]+'-'+full_aa_seq[full_start:full_stop]+'-'+full_aa_seq[ragged_stop-1]
 		aa_seq_nr = full_aa_seq[full_start:full_stop]
 
-	return aa_seq_ragged, aa_seq_nr, exon_prot_start, exon_prot_end
+	return aa_seq_ragged, aa_seq_nr, exon_prot_start, exon_prot_end, exon_coding_start, exon_coding_end
 
-def getAllExonSequences(exons, transcripts):
+def getAllExonSequences(exons, transcripts, genes):
 	exon_seqs_ragged = []
 	exon_seqs_nr = []
 	exon_prot_starts = []
 	exon_prot_ends = []
+	coding_starts = []
+	coding_ends = []
 	for e in range(exons.shape[0]):
 		exon = exons.iloc[e]
-		results = getExonCodingInfo(exon, transcripts)
+		try:
+			strand = genes.loc[exon['Gene stable ID'], 'Strand']
+		except:
+			print(exon)
+			print(exon['Gene stable ID'])
+			raise ValueError('Issue as before')
+		results = getExonCodingInfo(exon, transcripts, strand)
 		#coding_starts.append(results[0])
 		#coding_ends.append(results[1])
 		exon_seqs_ragged.append(results[0])
 		exon_seqs_nr.append(results[1])
 		exon_prot_starts.append(results[2])
 		exon_prot_ends.append(results[3])
+		coding_starts.append(results[4])
+		coding_ends.append(results[5])
 	
 	#exons['Exon Coding Start (bp)'] = coding_starts
 	#exons['Exon Coding Stop (bp)']
@@ -364,6 +383,8 @@ def getAllExonSequences(exons, transcripts):
 	exons['Exon End (Protein)'] = exon_prot_ends
 	exons['Exon AA Seq (Ragged)'] = exon_seqs_ragged
 	exons['Exon AA Seq (Full Codon)'] = exon_seqs_nr
+	exons['Exon Start (Gene Coding)'] = coding_starts
+	exons['Exon End (Gene Coding)'] = coding_ends
 		
 	return exons
 

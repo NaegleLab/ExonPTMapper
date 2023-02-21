@@ -11,8 +11,8 @@ from Bio import SeqIO
 #update these lines as needed
 api_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research'
 ps_data_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research\ProteomeScoutAPI\proteomescout_mammalia_20220131\data.tsv'
-source_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Oct182022/ensembl_data/'
-processed_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Oct182022/test/'
+source_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Feb162023/ensembl_data/'
+processed_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Feb162023/processed_data_dir/'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
 
@@ -25,7 +25,7 @@ def is_canonical(row):
         ans = np.nan
     elif row['UniProtKB isoform ID'] is np.nan:
         ans = 'Canonical'
-    elif row['UniProtKB isoform ID'].split('-')[1] == 1:
+    elif int(row['UniProtKB isoform ID'].split('-')[1]) == 1:
         ans = 'Canonical'
     else:
         ans = 'Alternative'
@@ -52,11 +52,15 @@ print('Downloading ID translator file')
 if os.path.isfile(processed_data_dir + 'translator.csv'):
     translator = pd.read_csv(processed_data_dir + 'translator.csv')
 else:
+    chromosomes = ['X', '20', '1', '6', '3', '7', '12', '11', '4', '17', '2', '16',
+       '8', '19', '9', '13', '14', '5', '22', '10', 'Y', '18', '15', '21',
+       'MT']
     dataset = pybiomart.Dataset(name='hsapiens_gene_ensembl',
                    host='http://www.ensembl.org')
     translator = dataset.query(attributes=['ensembl_gene_id','external_gene_name', 'ensembl_transcript_id',
                                        'uniprotswissprot', 'uniprot_isoform'],
-             filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'})
+             filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding',
+             'chromosome_name':chromosomes})
              
     #indicate whether row contains information on uniprot canonical transcript
     translator['Uniprot Canonical'] = translator.apply(is_canonical, axis =1)

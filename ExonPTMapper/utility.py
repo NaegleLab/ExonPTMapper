@@ -1,5 +1,6 @@
 import pandas as pd
 import gzip
+import numpy as np
 from Bio import SeqIO
 
 def processEnsemblFasta(file, id_col = 'ID', seq_col = 'Seq'):
@@ -26,7 +27,7 @@ def getUniProtCanonicalIDs(translator, ID_type = 'Transcript'):
         print("Please indicate whether you want 'Transcript' or 'Protein' IDs")
         return None
 
-def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1):
+def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1, return_residue = False):
     """
     given location in gene, transcript, or exon, return the location in the frame
 
@@ -56,18 +57,49 @@ def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1):
         #calculate location of nucleotide in transcript (with 0 being the first base pair of the entire transcript, including UTRs)
         loc_in_transcript = loc_in_exon + int(exon['Exon Start (Transcript)'])
         #calculate the location in the reading frame (mod returns 0 if multiple of 3 but want this to indicate first bp of a codon, so add 1)
-        frame = (loc_in_transcript - int(transcript['Relative CDS Start (bp)'])) % 3 + 1
+        coding_loc =(loc_in_transcript - int(transcript['Relative CDS Start (bp)']))
     elif loc_type == 'Exon':
         #calculate location of nucleotide in transcript (with 0 being the first base pair of the entire transcript, including UTRs)
         loc_in_transcript = loc + int(exon['Exon Start (Transcript)'])
         #calculate the location in the reading frame (mod returns 0 if multiple of 3 but want this to indicate first bp of a codon, so add 1)
-        frame = (loc_in_transcript - int(transcript['Relative CDS Start (bp)'])) % 3 + 1
+        coding_loc = (loc_in_transcript - int(transcript['Relative CDS Start (bp)']))
     elif loc_type == 'Transcript':
         #calculate the location in the reading frame (mod returns 0 if multiple of 3 but want this to indicate first bp of a codon, so add 1)
-        frame = (loc - int(transcript['Relative CDS Start (bp)'])) % 3 + 1
+        coding_loc = (loc - int(transcript['Relative CDS Start (bp)']))
     else:
         print("Invalid loc_type. Can only be based on location in 'Gene','Exon', or 'Transcript'")
-    return frame
+        return None
+        
+    frame = coding_loc % 3 + 1
+    #check to make sure coding loc is actually in coding region
+    aa_seq = transcript['Amino Acid Sequence']
+    if aa_seq != aa_seq:
+        frame = np.nan
+        if return_residue:
+            residue = np.nan
+            aa_pos = np.nan
+            return frame, residue, aa_pos
+        else:
+            return frame
+    elif coding_loc < 0 or coding_loc/3 >= len(aa_seq):
+        frame = -1
+        if return_residue:
+            residue = "Noncoding"
+            aa_pos = np.nan
+            return frame, residue, aa_pos
+        else:
+            return frame
+        
+    elif return_residue:
+        if frame == 1:
+            aa_pos = int(coding_loc/3)+1
+            residue = transcript['Amino Acid Sequence'][aa_pos-1]
+        else:
+            aa_pos = np.nan
+            residue = np.nan
+        return frame, residue, aa_pos
+    else:
+        return frame
     
     
 codon_dict = {'GCA':'A','GCG': 'A','GCC':'A','GCT':'A',
