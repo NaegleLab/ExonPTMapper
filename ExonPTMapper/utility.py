@@ -3,6 +3,14 @@ import gzip
 import numpy as np
 from Bio import SeqIO
 
+def stringToBoolean(string):
+    if string == 'False':
+        return False
+    elif string == 'True':
+        return True
+    else:
+        return np.nan
+
 def processEnsemblFasta(file, id_col = 'ID', seq_col = 'Seq'):
     data_dict = {id_col:[],seq_col:[]}
     with gzip.open(file,'rt') as handle:

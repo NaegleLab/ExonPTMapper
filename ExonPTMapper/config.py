@@ -13,6 +13,8 @@ api_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research'
 ps_data_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research\ProteomeScoutAPI\proteomescout_mammalia_20220131\data.tsv'
 source_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Feb162023/ensembl_data/'
 processed_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_Feb162023/processed_data_dir/'
+#source_data_dir = '../Ensembl54_Data/ensembl_data/'
+#processed_data_dir = '../Ensembl54_Data/processed_data_dir/'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
 

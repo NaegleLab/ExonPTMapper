@@ -23,7 +23,7 @@ Need 3 file types downloaded from_ensembl (can only download limited information
 """
 
 def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_name', 'strand','start_position','end_position', 'chromosome_name', 'uniprotswissprot'],
-							transcript_attributes = ['ensembl_gene_id','ensembl_transcript_id','transcript_length','transcript_appris', 'transcript_is_canonical'],
+							transcript_attributes = ['ensembl_gene_id','ensembl_transcript_id','transcript_length','transcript_appris', 'transcript_is_canonical','transcript_tsl'],
 							exon_attributes = ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_exon_id', 'is_constitutive','rank','exon_chrom_start', 'exon_chrom_end'],
 							filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding'}):
 							
@@ -88,7 +88,7 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
 
 	print('Getting transcript sequences from exon data')
 	start = time.time()
-	sorted_exons = exons.sort_values(by = ['Transcript stable ID','Exon rank in transcript'])
+	sorted_exons = exons.sort_values(by = ['Transcript stable ID','Exon rank in transcript']).copy()
 	transcript_sequences = sorted_exons.groupby('Transcript stable ID')['Exon Sequence'].apply(''.join)
 	transcript_sequences.name = 'Transcript Sequence'
 	sorted_exons['Exon End (Transcript)'] = sorted_exons['Exon End (Transcript)'].astype(str)
