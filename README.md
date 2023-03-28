@@ -70,6 +70,37 @@ This will both save the new data files in the config.processed_data_dir and will
 
 After running the full mapping pipeline, it is now time to analyze the data, and we have provided several modules for doing so.
 
+### Mapping Data
+
+You can simply use the mapping module as a means to quickly load the data. Eventually there may some additional functionality here.
+
+```
+from ExonPTMapper import mapping
+
+mapper = mapping.PTM_mapper()
+```
+
+This automatically load exon, transcript, gene, canonical ptm_info, alternative_ptms, and protein data as separate attributes, assuming the appropriate csv files exist in the processed_data_dir. 
+```
+#information specific to genes (index are ensembl gene ids)
+mapper.genes
+
+#information specific to transcripts, both canonical and alternative (index are ensembl transcript ids)
+mapper.transcripts
+
+#information specific to exons. Multiple rows can have information for the same exon id, if that exon is in multiple transcripts
+mapper.exons
+
+#information specific to proteins (index are UniProt IDs)
+mapper.proteins
+
+#ptms on canonical proteins, downloaded from proteomescout (each row is a unique PTM, indicated by an index of '{UniProt ID}_{Residue}{Position in Protein}')
+mapper.ptm_info
+
+#ptms on alternative transcripts, defined as any protein coding transcript coming from the same gene as the canonical protein)
+mapper.alternative_ptms
+```
+
 ### Plotting
 
 For visualizing different transcripts/splice events/PTMs, using the plot module. To begin, simply initialize the plotter class. It will automatically load in the necessary data from config.processed_data_dir.
