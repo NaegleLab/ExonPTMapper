@@ -381,11 +381,15 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
                                                     #if no match exists, check for frameshift or alternative start/stop sites
                                                     if match is None:
                                                         #get gene location found in both exons
-                                                        shared_loc = list(set(range(int(canonical_exons.loc[i,'Exon Start (Gene)']),int(canonical_exons.loc[i,'Exon End (Gene)']))).intersection(set(range(int(alt_exon['Exon Start (Gene)']),int(alt_exon['Exon End (Gene)'])))))[0]
+                                                        #shared_loc = list(set(range(int(canonical_exons.loc[i,'Exon Start (Gene)']),int(canonical_exons.loc[i,'Exon End (Gene)']))).intersection(set(range(int(alt_exon['Exon Start (Gene)']),int(alt_exon['Exon End (Gene)'])))))[0]
+                                                        if strand == 1:
+                                                            start_loc = alt_exon['Exon Start (Gene)']
+                                                        else:
+                                                            start_loc = alt_exon['Exon End (Gene)']
                                                         #calculate reading frame of canonical, based on shared loc
-                                                        can_frame = utility.checkFrame(canonical_exons.loc[i], transcripts.loc[canonical_trans], loc = shared_loc, loc_type = 'Transcript', strand = strand)
+                                                        can_frame = utility.checkFrame(canonical_exons.loc[i], transcripts.loc[canonical_trans], loc = start_loc, loc_type = 'Gene', strand = strand)
                                                         #calcualte reading frame of alternative, based on shared loc
-                                                        alt_frame = utility.checkFrame(alt_exon, transcripts.loc[alt_trans], shared_loc, loc_type = 'Transcript', strand = strand)
+                                                        alt_frame = utility.checkFrame(alt_exon, transcripts.loc[alt_trans], start_loc, loc_type = 'Gene', strand = strand)
                                                         
                                                         if alt_frame != can_frame:
                                                             sevent[1] = 'Frame Shift'
@@ -396,10 +400,7 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
                                                     else:
                                                         matched_start = match.span()[0] == 0
                                                         matched_stop = match.span()[1] == len(alt_seq)
-                                                        if not matched_start and not matched_stop:
-                                                            sevent[1] = 'Alternative Start and Stop Codon'
-                                                            sevent[4] = 'unclear'
-                                                        elif not matched_start:
+                                                        if not matched_start:
                                                             sevent[1] = 'Alternative Start Codon'
                                                             sevent[4] = 'unclear'
                                                         elif not matched_stop:
