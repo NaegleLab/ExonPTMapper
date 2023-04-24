@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 from Bio import SeqIO
+from Bio import pairwise2
+from Bio.Seq import Seq
+from cogent3 import make_aligned_seqs
 import os
 import gzip
 import re
@@ -8,6 +11,7 @@ import sys
 import time
 import multiprocessing
 from tqdm import tqdm
+import pyliftover
 from ExonPTMapper import config, processing, utility, alternative_mapping, get_splice_events
 
 
@@ -62,11 +66,11 @@ class PTM_mapper:
             ptm_df.insert(0, 'Protein', uniprot_id)
             ptm_df.insert(0, 'Transcript', transcript_id)
             ptm_df.insert(0, 'Gene', gene_id)
-            ptm_df.index = ptm_df['Protein']+'_'+ptm_df['Residue']+ptm_df['PTM Location (AA)']
+            #ptm_df.index = ptm_df['Protein']+'_'+ptm_df['Residue']+ptm_df['PTM Location (AA)']
        
         return ptm_df
         
-    def findAllPTMs(self, PROCESSES = 1):
+    def findAllPTMs(self, collapse = True, PROCESSES = 1):
         """
         Run find_ptms() for all transcripts, save in ptm_info dataframe
         """
@@ -85,16 +89,19 @@ class PTM_mapper:
                         df_list.append(info)		
                    
             self.ptm_info = pd.concat(df_list).dropna(axis = 1, how = 'all')
-            self.ptm_info.index = self.ptm_info['Protein']+'_'+self.ptm_info['Residue']+self.ptm_info['PTM Location (AA)'].astype(int).astype(str)
-            #collapse rows with duplicate indexes, but different transcripts or modififications into a single row, with each transcript or modification seperated by comma
-            grouped_genes = self.ptm_info.groupby(level = 0)['Gene'].apply(','.join)
-            self.ptm_info['Genes'] = grouped_genes
-            grouped_transcripts = self.ptm_info.groupby(level = 0)['Transcript'].apply(','.join)
-            self.ptm_info['Transcripts'] = grouped_transcripts
-            grouped_mods = self.ptm_info.groupby(level = 0)['Modification'].apply(set).apply(';'.join)
-            self.ptm_info['Modifications'] = grouped_mods
-            self.ptm_info = self.ptm_info.drop(['Gene','Transcript','Modification'], axis = 1)
-            self.ptm_info = self.ptm_info.drop_duplicates()
+            self.ptm_info['PTM'] = self.ptm_info['Protein']+'_'+self.ptm_info['Residue']+self.ptm_info['PTM Location (AA)']
+            if collapse:
+                #collapse rows with duplicate indexes, but different transcripts or modififications into a single row, with each transcript or modification seperated by comma
+                grouped_info = self.ptm_info.groupby(['Protein', 'Residue', 'PTM Location', 'PTM'])[['Gene', 'Transcript']].agg(','.join).reset_index()
+                grouped_mods = self.ptm_info.groupby(['Protein', 'Residue', 'PTM Location', 'PTM']).agg(lambda x: ';'.join(x.unique())).reset_index()
+                self.ptm_info = pd.merge([grouped_mods, grouped_info], on = ['Protein', 'Residue', 'PTM Location', 'PTM'])
+                self.ptm_info = self.ptm_info.drop_duplicates()
+                self.ptm_info = self.ptm_info.reset_index()
+                self.ptm_info.index = self.ptm_info['PTM']
+            else:
+                self.ptm_info['PTM Location (AA)'] = self.ptm_info['PTM Location (AA)'].astype(int)
+                self.ptm_info.index = self.ptm_info['PTM']
+                self.ptm_info = self.ptm_info.drop_duplicates()
         else:
             print('Multiprocessing not active yet. Please use PROCESSES = 1')
             
@@ -216,7 +223,7 @@ class PTM_mapper:
 
         
         return pd.Series(data = [gene_codon_start, PTM_start, exon_codon_start, exon_aa_start, exon_id, exon_rank, nterm_distance, cterm_distance, min_distance, ragged],
-                        index = ['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank', 'Distance to N-terminal Splice Boundary (NC)', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to Closest Boundary (NC)', 'Ragged'],
+                        index = ['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon rank in transcript', 'Distance to N-terminal Splice Boundary (NC)', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to Closest Boundary (NC)', 'Ragged'],
                         name = ptm)
                         
         
@@ -224,99 +231,160 @@ class PTM_mapper:
         """
         For all ptms in ptm_info, map to genome and save in ptm_positions 
         """
-        #process ptms to operate on each unique PTM instance separately
-        
-        #exploded_ptms = self.explode_PTMinfo()
-        
-        #check to make sure datatypes are correct
-        if self.ptm_info['PTM Location (AA)'].dtypes != int:
-            self.ptm_info['PTM Location (AA)'] = self.ptm_info['PTM Location (AA)'].astype(int)
-            
-        if PROCESSES > 1:
-            raise ValueError('Multiprocessing is not yet ready')
-            #get ptms and split into separate lists
-            ptm_list = self.ptm_info.index.values
-            pool = multiprocessing.Pool(processes = PROCESSES)
-            results = tqdm(pool.map(self.mapPTM, ptm_list))
+        #create copy of existing ptm_info dataframe
+        ptm_info = self.ptm_info.copy()
+        print('Getting location of PTMs in transcript')
+        #extract transcript level info required for mapping process (coding start and location of splice boundaries)
+        transcript_data = self.transcripts[['Relative CDS Start (bp)', 'Exon cuts']].copy()
+        transcript_data = transcript_data.dropna(subset = ['Exon cuts', 'Relative CDS Start (bp)'])
+        #convert exon cuts into list containing integers rather than a single string
+        transcript_data['Exon cuts'] = transcript_data['Exon cuts'].apply(lambda cut: np.array([int(x) for x in cut.split(',')]))
+        transcript_data['Relative CDS Start (bp)'] = pd.to_numeric(transcript_data['Relative CDS Start (bp)'], errors = 'coerce')
+        transcript_data = transcript_data.dropna(subset = ['Exon cuts', 'Relative CDS Start (bp)'])
+        #add transcript data to ptm information
+        ptm_info = ptm_info.merge(transcript_data, left_on = 'Transcript', right_index = True, how = 'left')
+        ptm_info = ptm_info.dropna(subset = 'Exon cuts')
 
-        else:
-            results = []
-            iteration = 1
-            #check if mapping has been run previously
-            if 'Exon stable ID' in self.ptm_info.columns and not restart:
-                print('Found data from previous runs. Only analyzing rows without exon information. If you would like to analyze all ptms, set restart = True.\n')
-                #get ptms that still need to be analyzed and those that already have been
-                ptms_for_analysis = self.ptm_info[self.ptm_info['Exon stable ID'].isna()].index
-                analyzed_ptms = self.ptm_info.loc[~self.ptm_info['Exon stable ID'].isna(),['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank', 'Distance to N-terminal Splice Boundary (NC)', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to Closest Boundary (NC)', 'Ragged']]
-                num_analyzed_ptms = analyzed_ptms.shape[0]
-                iteration = iteration+num_analyzed_ptms
-                print(f'Analysis restarting at row {iteration}\n')
-                for ptm in tqdm(ptms_for_analysis, desc = 'Mapping PTMs to exon and gene'):
-                    results.append(self.mapPTM(ptm))
+        #get transcript location of PTMs
+        ptm_info['Transcript Location (NC)'] = ((ptm_info['PTM Location (AA)']-1)*3 + ptm_info['Relative CDS Start (bp)']).astype(int)
+        
+        
+        #get rank of exon in transcript, based on transcript location and exon cuts. To do so, find the first exon cut which is greater than transcript location.
+        min_exon_rank = self.exons.groupby('Transcript stable ID')['Exon rank in transcript'].min()
+        exon_rank = []
+        for i, row in tqdm(ptm_info.iterrows(), total = ptm_info.shape[0], desc = 'Identify PTM-containing exons'):
+            #get minimum exon rank in transcript, for rare case when first exons don't have sequence info
+            #min_exon_rank = self.exons.loc[self.exons['Transcript stable ID'] == row['Transcript'], 'Exon rank in transcript'].min()
+            normed_cuts = row['Transcript Location (NC)'] - row['Exon cuts']
+            #find the first negative number in normed_cuts (larger than transcript loc)
+            for c in range(len(normed_cuts)):
+                if normed_cuts[c] <  0:
+                    #add 1, as currently in pythonic coordinates (if missing first exon ranks, add additional)
+                    exon_rank.append(c+min_exon_rank[row['Transcript']])
+                    break
                     
-                    #if save_iter has been reached, temporarily save results
-                    if iteration % save_iter == 0:
-                        #print(f'Saving results from iteration {iteration}\n')
-                        tmp_results = pd.concat(results, axis = 1).T
-                        tmp_results = pd.concat([analyzed_ptms, tmp_results])
-                        self.ptm_info = self.ptm_info.drop(['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank', 'Distance to N-terminal Splice Boundary (NC)', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to Closest Boundary (NC)', 'Ragged'], axis = 1)
-                        self.ptm_info = self.ptm_info.join(tmp_results)
-                        
-                        self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
-                        
-                    iteration += 1
+        ptm_info['Exon rank in transcript'] = exon_rank
+        ptm_info = ptm_info.drop('Exon cuts', axis = 1)
+        
+        #add exon level information required for rest of mapping process
+        exon_info = self.exons[['Transcript stable ID', 'Exon stable ID', 'Exon rank in transcript', 'Exon Start (Gene)', 'Exon End (Gene)', 'Exon Start (Transcript)', 'Exon End (Transcript)', 'Exon Start (Protein)']].copy()
+        ptm_info = ptm_info.merge(exon_info, left_on = ['Transcript', 'Exon rank in transcript'], right_on = ['Transcript stable ID', 'Exon rank in transcript'], how = 'left')
+        print('Getting distance to exon-exon junctions')
+        #get distance to exon-exon junctions and start of PTM in exon
+        ptm_info['Distance to N-terminal Splice Boundary (NC)'] = (ptm_info['Transcript Location (NC)'] - ptm_info['Exon Start (Transcript)'])
+        ptm_info['Distance to C-terminal Splice Boundary (NC)'] = (ptm_info['Exon End (Transcript)'] - (ptm_info['Transcript Location (NC)']+3))
+        min_dist = []
+        for i, row in ptm_info.iterrows():
+            min_dist.append(min([row['Distance to N-terminal Splice Boundary (NC)'], row['Distance to C-terminal Splice Boundary (NC)']]))
+        ptm_info['Distance to Closest Boundary (NC)'] = min_dist
+        ptm_info['Ragged'] = ptm_info['Distance to Closest Boundary (NC)'] < 0
+        
+        #get genomic location of ptms and coordinates (check which strand gene is on, will change how this is calculated)
+        ptm_info = ptm_info.merge(self.genes[['Chromosome/scaffold name', 'Strand']], left_on = 'Gene', right_index = True)
+        gene_loc = []
+        coordinates = []
+        second_exon = []
+        ragged_loc_list = []
+        for i, row in tqdm(ptm_info.iterrows(), total = ptm_info.shape[0], desc = 'Getting location of PTMs in genome'):
+            if row['Strand'] == 1:
+                loc = row['Distance to N-terminal Splice Boundary (NC)'] + row['Exon Start (Gene)']
             else:
-                for ptm in tqdm(self.ptm_info.index, desc = 'Mapping PTMs to exon and gene'):
-                    results.append(self.mapPTM(ptm))
-                    
-                    #if save_iter has been reached, temporarily save results
-                    if iteration % save_iter == 0:
-                        #print(f'Saving results from iteration {iteration}')
-                        tmp_results = pd.concat(results, axis = 1).T
-                        if 'Exon stable ID' in self.ptm_info.columns:
-                            self.ptm_info = self.ptm_info.drop(['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank', 'Distance to N-terminal Splice Boundary (NC)','Distance to C-terminal Splice Boundary (NC)', 'Distance to Closest Boundary (NC)', 'Ragged'], axis = 1)
-                        self.ptm_info = self.ptm_info.join(tmp_results)
-                        
-                        self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
-                    iteration += 1
+                loc = row['Exon End (Gene)'] - row['Distance to N-terminal Splice Boundary (NC)']
+            #check if able to get location, if so convert to integer
+            if loc == loc:
+                loc = int(loc)
+            gene_loc.append(loc)
+                
+            if not row['Ragged']:
+                coordinates.append(getGenomicCoordinates(row['Chromosome/scaffold name'], loc, row['Strand']))
+                second_exon.append(np.nan)
+                ragged_loc_list.append(np.nan)
+            else:
+                #identify the other exon contributing to ragged PTM site, get start of this exon 
+                next_rank = row['Exon rank in transcript'] + 1
+                transcript = self.exons[self.exons['Transcript stable ID'] == row['Transcript']]
+                next_exon = transcript[transcript['Exon rank in transcript'] == next_rank].squeeze()
+                ragged_loc = int(next_exon['Exon Start (Gene)'] if row['Strand'] == 1 else next_exon['Exon End (Gene)'])
+                #get coordinates of ragged PTM, save exon id of second contributing exon
+                coordinates.append(getRaggedCoordinates(row['Chromosome/scaffold name'], loc, ragged_loc, min_dist, row['Strand']))
+                ragged_loc_list.append(ragged_loc)
+                second_exon.append(next_exon['Exon stable ID'])
+        ptm_info['Gene Location (NC)'] = gene_loc
+        ptm_info['Genomic Coordinates'] = coordinates
+        ptm_info['Second Contributing Exon'] = second_exon
+        ptm_info['Ragged Genomic Location'] = ragged_loc_list
+        ptm_info = ptm_info.drop(['Exon Start (Gene)', 'Exon End (Gene)', 'Exon Start (Transcript)', 'Exon End (Transcript)'], axis = 1)
+        
 
-        #concatenate series into dataframe
-        results = pd.concat(results, axis = 1).T
-
-        analyzed_ptms = self.ptm_info.loc[~self.ptm_info['Exon stable ID'].isna(),['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank','Distance to N-terminal Splice Boundary (NC)', 'Distance to C-terminal Splice Boundary (NC)','Distance to Closest Boundary (NC)', 'Ragged']]
-        self.ptm_info = self.ptm_info.drop(['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon Rank','Distance to N-terminal Splice Boundary (NC)', 'Distance to C-terminal Splice Boundary (NC)','Distance to Closest Boundary (NC)', 'Ragged'], axis = 1)
-        results = pd.concat([analyzed_ptms, results])
-        #add to ptm_info dataframe
-        self.ptm_info = self.ptm_info.join(results) 
-
-        self.ptm_info = self.ptm_info.drop_duplicates()
-        print('All data analyzed: saving full ptm_info results')
-        self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
+        
+        #get ptm location in exon in amino acid coordinates
+        exon_aa_loc = []
+        for i, row in tqdm(ptm_info.iterrows(), total = ptm_info.shape[0], desc = 'Getting residue number within each exon'):
+            if row['Exon Start (Protein)'] == 'Partial start codon' or row['Exon Start (Protein)'] == "5' NCR" or row['Exon Start (Protein)'] == "3' NCR":
+                exon_aa_loc.append(np.nan)
+            else:
+                exon_aa_loc.append(row['PTM Location (AA)'] - float(row['Exon Start (Protein)']))
+        ptm_info['Exon Location (AA)'] = exon_aa_loc
+        
+        print('Processing final mapped data')
+        #save new dataframe which will be trimmed version of ptm info with each row containing a PTM mapped to unique genomic coordinates
+        ptm_coordinates = ptm_info[['Genomic Coordinates', 'PTM','Residue', 'Modification', 'Chromosome/scaffold name', 'Strand','Gene Location (NC)', 'Ragged', 'Ragged Genomic Location', 'Exon stable ID']].copy()
+        ptm_coordinates = ptm_coordinates.dropna(subset = 'Gene Location (NC)')
+        ptm_coordinates = ptm_coordinates.drop_duplicates()
+        ptm_coordinates = ptm_coordinates.astype({'Gene Location (NC)': int, 'Strand':int, 'Ragged':bool})
+        #group modifications for the same ptm in the same row
+        grouped = ptm_coordinates.groupby(['Genomic Coordinates', 'PTM', 'Chromosome/scaffold name', 'Residue', 'Strand', 'Gene Location (NC)', 'Ragged'])
+        ptm_coordinates = pd.concat([grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(lambda x: ';'.join(np.unique(x))), grouped['Exon stable ID'].agg(lambda x: ';'.join(np.unique(x)))], axis = 1)
+        ptm_coordinates = ptm_coordinates.reset_index()
+        ptm_coordinates = ptm_coordinates.rename({'PTM':'Source of PTM', 'Modification':'Modifications', 'Exon stable ID': 'Source Exons'}, axis = 1)
+        ptm_coordinates.index = ptm_coordinates['Genomic Coordinates']
+        ptm_coordinates = ptm_coordinates.drop('Genomic Coordinates', axis = 1)
+        #get coordinates in the hg19 version of ensembl using hg38 information
+        hg19_coords = []
+        liftover_object = pyliftover.LiftOver('hg38','hg19')
+        for i, row in tqdm(ptm_coordinates.iterrows(), total = ptm_coordinates.shape[0], desc = 'Converting from hg38 to hg19 coordinates'):
+            hg19_coords.append(convertToHG19(row['Gene Location (NC)'], row['Chromosome/scaffold name'], row['Strand'], liftover_object = liftover_object))
+        ptm_coordinates['HG19 Location'] = hg19_coords
+        ptm_coordinates = ptm_coordinates.drop_duplicates()
+        self.ptm_coordinates = ptm_coordinates.copy()
+        
+        
+        #collapse information for each ptm, save new ptm_info dataframe 
+        ptm_info = ptm_info.drop(['Strand', 'Transcript stable ID', 'Relative CDS Start (bp)', 'Chromosome/scaffold name', 
+                                'Second Contributing Exon', 'Ragged Genomic Location'], axis = 1)
+        ptm_info = ptm_info.astype(str)
+        ptm_info = ptm_info.groupby(['PTM','Protein', 'Residue', 'PTM Location (AA)']).agg(';'.join).reset_index()
+        ptm_info['PTM Location (AA)'] = ptm_info['PTM Location (AA)'].astype(int)
+        ptm_info = ptm_info.rename({'Transcript':'Transcripts', 'Gene':'Genes', 'Modification':'Modifications'}, axis = 1)
+        ptm_info.index = ptm_info['PTM']
+        ptm_info = ptm_info.drop('PTM', axis = 1)
+        self.ptm_info = ptm_info.copy()
+            
 
             
-    def explode_PTMinfo(self, explode_cols = ['Genes', 'Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)','Exon Location (AA)', 'Exon stable ID', 'Exon Rank', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to N-terminal Splice Boundary (NC)', 'Distance to Closest Boundary (NC)', 'Ragged']):
+    def explode_PTMinfo(self, explode_cols = ['Genes', 'Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon rank in transcript']):
         exploded_ptms = self.ptm_info.copy()
         #check columns that exist
         explode_cols = [col for col in explode_cols if col in exploded_ptms.columns.values]
         #split different entries
         for col in explode_cols:
-            exploded_ptms[col] = exploded_ptms[col].apply(lambda x: x.split(','))
+            exploded_ptms[col] = exploded_ptms[col].apply(lambda x: x.split(';') if x == x else np.nan)
       
         exploded_ptms = exploded_ptms.explode(explode_cols)
         exploded_ptms = exploded_ptms.reset_index()
         exploded_ptms = exploded_ptms.rename({'index':'PTM'}, axis = 1)
         return exploded_ptms
         
-    def collapse_PTMinfo(self, all_cols = ['Genes', 'Transcripts','Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)','Exon stable ID', 'Exon Rank'], unique_cols = ['Modifications', 'Exon Location (AA)', 'Protein', 'PTM Location (AA)', 'Residue']):
+    def collapse_PTMinfo(self, all_cols = ['Genes', 'Transcripts','Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)','Exon stable ID', 'Exon rank in transcript'], unique_cols = ['Modifications', 'Exon Location (AA)', 'Protein', 'PTM Location (AA)', 'Residue']):
         ptms = self.ptm_info.copy()
         ptms = ptms.astype(str)
         grouped_mods = ptms.groupby(level = 0)
         collapsed_ptms = []
         for col in self.ptm_info.columns:
             if col in unique_cols:
-                collapsed_ptms.append(grouped_mods[col].apply(set).apply(','.join))
+                collapsed_ptms.append(grouped_mods[col].apply(set).apply(';'.join))
             else:
-                collapsed_ptms.append(grouped_mods[col].apply(','.join))
+                collapsed_ptms.append(grouped_mods[col].apply(';'.join))
         collapsed_ptms = pd.concat(collapsed_ptms, axis = 1)
         return collapsed_ptms
 
@@ -360,8 +428,8 @@ class PTM_mapper:
             pos = int(self.ptm_info.loc[ptm, 'PTM Location (AA)'])
             transcript = self.ptm_info.loc[ptm, 'Transcripts']
             #if multiple transcripts associated with protein, only use first transcript (should be same seq)
-            if ',' in transcript:
-                transcript = transcript.split(',')[0]
+            if ';' in transcript:
+                transcript = transcript.split(';')[0]
             fragment.append(self.getTrypticFragment(pos, transcript))
         self.ptm_info['Tryptic Fragment'] = fragment
         
@@ -406,8 +474,8 @@ class PTM_mapper:
             pos = self.ptm_info.loc[ptm, 'PTM Location (AA)']
             transcript = self.ptm_info.loc[ptm, 'Transcripts']
             #if multiple transcripts associated with protein, only use first transcript (should be same seq)
-            if ',' in transcript:
-                transcript = transcript.split(',')[0]
+            if ';' in transcript:
+                transcript = transcript.split(';')[0]
             flanks.append(self.getFlankingSeq(pos, transcript, flank_size))
         self.ptm_info['Flanking Sequence'] = flanks
             
@@ -484,9 +552,6 @@ class PTM_mapper:
         self.ptm_info['Domain Type'] = domain_type_list
         
     def mapPTMtoExons(self, ptm, trim_exons = None, alternative_only = True):
-        #check to make sure gene location is str so that multiple locs can be split into list
-        if not isinstance(ptm['Gene Location (NC)'], str):
-            ptm['Gene Location (NC)'] = str(ptm['Gene Location (NC)'])
             
         #reduce exons dataframe to exons associated with transcripts with available information, if not provided
         if trim_exons is None:
@@ -500,132 +565,144 @@ class PTM_mapper:
             trim_exons = self.exons[self.exons['Transcript stable ID'].isin(available_transcripts)]
             #extract only exon information required for mapping, making sure no duplicates
             trim_exons = trim_exons[['Gene stable ID', 'Exon stable ID', 'Exon Start (Gene)', 'Exon End (Gene)', 'Exon Start (Transcript)', 'Exon End (Transcript)','Transcript stable ID', 'Exon rank in transcript']].drop_duplicates()
+            #add chromosome and strand info to list
+            trim_exons = trim_exons.merge(self.genes[['Chromosome/scaffold name', 'Strand']], left_on = 'Gene stable ID', right_index = True)
         
         results = None
         #isolate info into unique genes (if multiple associated with protein/ptm of interest)
-        gene_locs = ptm['Gene Location (NC)'].split(',')
-        exons = ptm['Exon stable ID'].split(',')
-        genes = self.genes.loc[ptm['Genes'].split(',')]
-        exon_rank = ptm['Exon Rank'].split(',')
-        transcript_ids = ptm['Transcripts'].split(',')
-        ragged = ptm['Ragged'].split(',')
-        for g in range(len(gene_locs)):
-            gene = genes.iloc[g]
-            source_exon_id = exons[g]
-            gene_loc = gene_locs[g]
-            if gene_loc != 'Exons Not Found' and gene_loc != 'CDS fail':
-                gene_loc = int(gene_loc)
-                strand = gene['Strand']
-                #grab all exons containing ptm site (based on genome location and ensuring they come from same gene info)
-                ptm_exons = trim_exons[(trim_exons['Exon Start (Gene)'] <= gene_loc) & (trim_exons['Exon End (Gene)'] >= gene_loc) & (trim_exons['Gene stable ID'] == gene.name)].copy()
-                
-                #if site is ragged, check second exon for conserved region
-                #if utility.stringToBoolean(ragged[0]):
-                #    first_contributing_exon_rank = exon_rank[g]
-                #    second_contributing_exon_rank = first_contributing_exon_rank + 1
-                #    other_contributing_exon = exons[(exons['Transcript stable ID'] == transcripts[g]) & (exons['Exon rank in transcript'] == second_contributing_exon_rank)].squeeze()
-                #    if strand == 1:
-                #        loc_other_exon_in_gene = other_contributing_exon['Exon Start (Gene)']
-                #    else:
-                #        loc_other_exon_in_gene = other_contributing_exon['Exon End (Gene)']
-                #    #check if second exon is conserved AND was not already found when looking for first exon
-                #    second_ptm_exons = trim_exons[(trim_exons['Exon Start (Gene)'] <= loc_other_exon_in_gene) & (trim_exons['Exon End (Gene)'] >= loc_other_exon_in_gene) & (trim_exons['Gene stable ID'] == gene.name) & ~(trim_exons['Transcript stable ID'].isin(ptm_exons['Transcript stable ID']))].copy()
-                #else:
-                #    second_ptm_exons = None
-                    
-                if ptm_exons.shape[0] != 0:
-                    ptm_exons['PTM'] = ptm.name
-                    ptm_exons['Source Exon'] = source_exon_id
-                    chromosome = gene['Chromosome/scaffold name']
+        coordinates = ptm.name
+        gene_loc = ptm['Gene Location (NC)']
+        ragged = ptm['Ragged']
+        ragged_loc = ptm['Ragged Genomic Location']
+        chromosome = ptm['Chromosome/scaffold name']
+        strand = ptm['Strand']
+        #restrict exons to those on the same chromosome and strand
+        trim_exons = trim_exons[(trim_exons['Chromosome/scaffold name'] == chromosome) &(trim_exons['Strand'] == strand)]
+        
+        #grab all exons containing ptm site (based on genome location and ensuring they come from same gene info)
+        ptm_exons = trim_exons[(trim_exons['Exon Start (Gene)'] <= gene_loc) & (trim_exons['Exon End (Gene)'] >= gene_loc)].copy()
+        
+        #if site is ragged, check second exon for conserved region
+        if utility.stringToBoolean(ragged):
+            #check if second exon is conserved AND was not already found when looking for first exon
+            second_ptm_exons = trim_exons[(trim_exons['Exon Start (Gene)'] <= ragged_loc) & (trim_exons['Exon End (Gene)'] >= ragged_loc) & ~(trim_exons['Transcript stable ID'].isin(ptm_exons['Transcript stable ID']))].copy()
+            if second_ptm_exons.shape[0] == 0:
+                second_ptm_exons = None
+        else:
+            second_ptm_exons = None
+            
+        if ptm_exons.shape[0] != 0:
+            ptm_exons['Source Exons'] = ptm['Source Exons']
+            ptm_exons['Source of PTM'] = ptm['Source of PTM']
+            ptm_exons['Canonical Residue'] = ptm['Residue']
+            ptm_exons['Modifications'] = ptm['Modifications']
+            
+            #ptm_exons['Source Exon'] = source_exon_id
+            
 
-                    #check if ptm is at the boundary (ragged site)
-                    distance_to_bound = ptm_exons.apply(getDistanceToBoundary, args = (gene_loc, strand), axis = 1)
-                    ptm_exons['Ragged'] = distance_to_bound <= 1
-                    #identify location of ptm in new exons (different equations depending on if gene is on the forward or reverse strand)
-                    if not ptm_exons['Ragged'].any():
-                        ptm_exons['Genomic Coordinates'] = getGenomicCoordinates(chromosome, gene_loc, strand)
-                        ptm_exons['Second Exon'] = np.nan
-                        #check if frame matches for given event: if it does, identify new residue + position in protein associated with exon
-                        ptm_loc_info = ptm_exons.apply(getPTMLoc, args = (self, gene_loc, strand), axis = 1)
-                        #unpack results and save to dataframe
-                        ptm_exons['Frame'] = [x[0] for x in ptm_loc_info]
-                        ptm_exons['Residue'] = [x[1] for x in ptm_loc_info]
-                        ptm_exons['Position'] = [x[2] for x in ptm_loc_info]
-                    else:
-                        coords = []
-                        aa_pos_list = []
-                        residue_list = []
-                        frame_list = []
-                        second_exon_list = []
-                        for i, row in ptm_exons.iterrows():
-                            if row['Ragged']:
-                                next_rank = row['Exon rank in transcript'] + 1
-                                transcript = self.exons[self.exons['Transcript stable ID'] == row['Transcript stable ID']]
-                                next_exon = transcript[transcript['Exon rank in transcript'] == next_rank].squeeze()
-                                ragged_loc = next_exon['Exon Start (Gene)'] if strand == 1 else next_exon['Exon End (Gene)']
-                                if isinstance(ragged_loc, pd.Series):
-                                    coords.append(np.nan)
-                                    frame_list.append(np.nan)
-                                    residue_list.append(np.nan)
-                                    aa_pos_list.append(np.nan)
-                                    second_exon_list.append(np.nan)
-                                else:
-                                    #check if frame matches for given event: if it does, identify new residue + position in protein associated with exon
-                                    frame, residue, aa_pos = getPTMLoc(row, self, gene_loc, strand)
-                                    frame_list.append(frame)
-                                    residue_list.append(residue)
-                                    aa_pos_list.append(aa_pos)
-                                    second_exon_list.append(next_exon['Exon stable ID'])
-                                    #get genomic coordinates (from both contributing exons)
-                                    coords.append(getRaggedCoordinates(chromosome, gene_loc, ragged_loc, distance_to_bound[i], strand))
-
-                            else:
-                                coords.append(getGenomicCoordinates(chromosome, gene_loc, strand))
-                                #check if frame matches for given event: if it does, identify new residue + position in protein associated with exon
-                                frame, residue, aa_pos = getPTMLoc(row, self, gene_loc,strand)
-                                frame_list.append(frame)
-                                residue_list.append(residue)
-                                aa_pos_list.append(aa_pos)
-                                second_exon_list.append(np.nan)
-
-                        ptm_exons['Genomic Coordinates'] = coords
-                        ptm_exons['Frame'] = frame_list
-                        ptm_exons['Residue'] = residue_list
-                        ptm_exons['Position'] = aa_pos_list
-                        ptm_exons['Second Exon'] = second_exon_list
-                        
-                #if second_ptm_exons is not None:
-                #    coordinates = []
-                #    frame_list = []
-                #    residue_list = []
-                #    position_list = []
-                #    for i, row in second_ptm_exons.iterrows():
-                #        #get PTM distance to boundary (should be the same for all canonical transcripts). this will indicate how much each exon contributes to ragged site
-                #        dist_to_boundary =  int(ptm['Distance to Closest Boundary (NC)'].split(',')[0])
-                #        if strand == 1:
-                #            start_second_exon = row['Exon Start (Transcript)']
-                #            codon_start = start_second_exon - (3+dist_to_boundary)
-                #        else:
-                #            codon_start = row['Exon End (Transcript)']
-                #        
-                        #check frame
-                #        transcript = mapper.transcripts.loc[transcript_ids[g]]
-                #        transcript_sequence = transcripts.loc[transcripts[g], 'Transcript Sequence']
-                #        codon = transcript_sequence[codon_start:codon_start+3]
-                #        new_residue = utility.codon_dict[codon]
-                #        residue_list.append(new_residue)
-                #        if new_residue == canonical_ptm['Residue']:
-                #            position_list.append((codon_start - transcript['Relative CDS Start (bp)'] + 3)/3)
+            #check if ptm is at the boundary (ragged site)
+            distance_to_bound = ptm_exons.apply(getDistanceToBoundary, args = (gene_loc, strand), axis = 1)
+            ptm_exons['Ragged'] = distance_to_bound <= 1
+            #identify location of ptm in new exons (different equations depending on if gene is on the forward or reverse strand)
+            if not ptm_exons['Ragged'].any():
+                ptm_exons['Genomic Coordinates'] = coordinates
+                ptm_exons['Second Exon'] = np.nan
+                #check if frame matches for given event: if it does, identify new residue + position in protein associated with exon
+                ptm_loc_info = ptm_exons.apply(getPTMLoc, args = (self, gene_loc, strand), axis = 1)
+                #unpack results and save to dataframe
+                ptm_exons['Frame'] = [x[0] for x in ptm_loc_info]
+                ptm_exons['Alternative Residue'] = [x[1] for x in ptm_loc_info]
+                ptm_exons['Alternative Protein Position (AA)'] = [x[2] for x in ptm_loc_info]
+            else:
+                coords = []
+                aa_pos_list = []
+                residue_list = []
+                frame_list = []
+                second_exon_list = []
+                for i, row in ptm_exons.iterrows():
+                    if row['Ragged']:
+                        next_rank = row['Exon rank in transcript'] + 1
+                        transcript = self.exons[self.exons['Transcript stable ID'] == row['Transcript stable ID']]
+                        next_exon = transcript[transcript['Exon rank in transcript'] == next_rank].squeeze()
+                        ragged_loc = next_exon['Exon Start (Gene)'] if strand == 1 else next_exon['Exon End (Gene)']
+                        if isinstance(ragged_loc, pd.Series):
+                            coords.append(np.nan)
+                            frame_list.append(np.nan)
+                            residue_list.append(np.nan)
+                            aa_pos_list.append(np.nan)
+                            second_exon_list.append(np.nan)
                             
-                    #second_ptm_exons['Genomic Coordinates'] =
-                    #second_ptm_exons['Frame'] =
-                    #second_ptm_exons['Residue']
-                    #second_ptm_exons['Position']
-                if ptm_exons.shape[0] > 0:
-                    if results is None:
-                        results = ptm_exons.copy()
+                        else:
+                            #check if frame matches for given event: if it does, identify new residue + position in protein associated with exon
+                            frame, residue, aa_pos = getPTMLoc(row, self, gene_loc, strand)
+                            frame_list.append(frame)
+                            residue_list.append(residue)
+                            aa_pos_list.append(aa_pos)
+                            second_exon_list.append(next_exon['Exon stable ID'])
+                            #get genomic coordinates (from both contributing exons)
+                            coords.append(getRaggedCoordinates(chromosome, gene_loc, ragged_loc, distance_to_bound[i], strand))
+
                     else:
-                        results = pd.concat([results, ptm_exons])
+                        coords.append(getGenomicCoordinates(chromosome, gene_loc, strand))
+                        #check if frame matches for given event: if it does, identify new residue + position in protein associated with exon
+                        frame, residue, aa_pos = getPTMLoc(row, self, gene_loc,strand)
+                        frame_list.append(frame)
+                        residue_list.append(residue)
+                        aa_pos_list.append(aa_pos)
+                        second_exon_list.append(np.nan)
+
+                ptm_exons['Genomic Coordinates'] = coords
+                ptm_exons['Frame'] = frame_list
+                ptm_exons['Alternative Residue'] = residue_list
+                ptm_exons['Alternative Protein Position (AA)'] = aa_pos_list
+                ptm_exons['Second Exon'] = second_exon_list
+
+            ptm_exons['Ragged'] = ptm_exons['Ragged'].astype(str)
+                
+        if second_ptm_exons is not None:
+            coordinates = []
+            frame_list = []
+            residue_list = []
+            position_list = []
+            for i, row in second_ptm_exons.iterrows():
+                #get PTM distance to boundary (should be the same for all canonical transcripts). this will indicate how much each exon contributes to ragged site
+                dist_to_boundary =  int(self.ptm_info.loc[ptm['Source of PTM'], 'Distance to Closest Boundary (NC)'].split(';')[0])
+                start_second_exon = row['Exon Start (Transcript)']
+                codon_start = start_second_exon - (3+dist_to_boundary)
+                
+                #check frame
+                transcript = self.transcripts.loc[row['Transcript stable ID']]
+                if transcript['Relative CDS Start (bp)'] != 'No coding sequence' and transcript['Relative CDS Start (bp)'] != 'error:no match found':
+                    frame, residue, aa_pos = utility.checkFrame(row, transcript, codon_start, loc_type = 'Transcript', strand = strand, return_residue = True)
+                else:
+                    frame, residue, aa_pos = np.repeat(np.nan, 3)
+                #transcript_sequence = transcripts.loc[transcripts[g], 'Transcript Sequence']
+                #codon = transcript_sequence[codon_start:codon_start+3]
+                #new_residue = utility.codon_dict[codon]
+                #residue_list.append(new_residue)
+
+                    
+                frame_list.append(frame)
+                residue_list.append(residue)
+                position_list.append(aa_pos)
+                ragged_loc = row['Exon Start (Gene)'] if strand == 1 else row['Exon End (Gene)']
+                coordinates.append(getRaggedCoordinates(chromosome, gene_loc, ragged_loc, dist_to_boundary, strand))
+
+                    
+            second_ptm_exons['Genomic Coordinates'] = coordinates
+            second_ptm_exons['Frame'] = frame_list
+            second_ptm_exons['Alternative Residue'] = residue_list
+            second_ptm_exons['Alternative Protein Position (AA)'] = position_list
+            second_ptm_exons = second_ptm_exons.rename({'Exon stable ID': 'Second Exon'}, axis = 1)
+            second_ptm_exons['Source Exons'] = ptm['Source Exons']
+            second_ptm_exons['Source of PTM'] = ptm['Source of PTM']
+            second_ptm_exons['Modifications'] = ptm['Modifications']
+            second_ptm_exons['Ragged'] = True
+            second_ptm_exons['Ragged'] = second_ptm_exons['Ragged'].astype(str)
+            ptm_exons = pd.concat([ptm_exons, second_ptm_exons])
+
+        if ptm_exons.shape[0] > 0:
+            results = ptm_exons.copy()
                     
         return results
         
@@ -638,25 +715,47 @@ class PTM_mapper:
         #grab exons associated with available transcripts
         trim_exons = self.exons[self.exons['Transcript stable ID'].isin(available_transcripts)]
         trim_exons = trim_exons[['Gene stable ID', 'Exon stable ID', 'Exon Start (Gene)', 'Exon End (Gene)', 'Exon Start (Transcript)', 'Exon End (Transcript)','Transcript stable ID', 'Exon rank in transcript']].drop_duplicates()
+        #add chromosome and strand information to exon dataframe
+        trim_exons = trim_exons.merge(self.genes[['Chromosome/scaffold name', 'Strand']], left_on = 'Gene stable ID', right_index = True)
         
         #convert gene location into string
-        self.ptm_info['Gene Location (NC)'] = self.ptm_info['Gene Location (NC)'].astype(str)
-        
-        alt_ptms = None
-        for i,ptm in tqdm(self.ptm_info.iterrows()):
-            ptm_exons = self.mapPTMtoExons(ptm, trim_exons = trim_exons)
-            if ptm_exons is not None:
-                if alt_ptms is None:
-                    alt_ptms = ptm_exons.copy()
-                else:
+        if os.path.exists(config.processed_data_dir + 'temp_alt_ptms.csv'):
+            alt_ptms = pd.read_csv(config.processed_data_dir + 'temp_alt_ptms.csv', dtype = {'Ragged': str})
+            alt_ptms = alt_ptms.dropna(subset = 'Source of PTM')
+            analyzed_ptms = alt_ptms['Source of PTM'].unique()
+            print(f'Found {len(analyzed_ptms)} already analyzed from previous runs')
+            ptms_to_analyze = self.ptm_coordinates[~self.ptm_coordinates['Source of PTM'].isin(analyzed_ptms)]
+            i = 1
+            for index,ptm in tqdm(ptms_to_analyze.iterrows(), total = ptms_to_analyze.shape[0]):
+                ptm_exons = self.mapPTMtoExons(ptm, trim_exons = trim_exons)
+                if ptm_exons is not None:
                     alt_ptms = pd.concat([alt_ptms, ptm_exons])
+                
+                if i % 10000 == 0:
+                    alt_ptms.to_csv(config.processed_data_dir + 'temp_alt_ptms.csv', index = False)
+                i = i + 1
+        else:
+            alt_ptms = None
+            i = 1
+            for index,ptm in tqdm(self.ptm_coordinates.iterrows(), total = self.ptm_coordinates.shape[0]):
+                ptm_exons = self.mapPTMtoExons(ptm, trim_exons = trim_exons)
+                if ptm_exons is not None:
+                    if alt_ptms is None:
+                        alt_ptms = ptm_exons.copy()
+                    else:
+                        alt_ptms = pd.concat([alt_ptms, ptm_exons])
+                        
+                if i % 10000 == 0:
+                    alt_ptms.to_csv(config.processed_data_dir + 'temp_alt_ptms.csv', index = False)
+                i = i + 1
+                
+        alt_ptms.to_csv(config.processed_data_dir + 'temp_alt_ptms.csv', index = False)
+        print('Saving mapped ptms, final')
         
         #remove residual exon columns that are not needed
         alt_ptms = alt_ptms.drop(['Exon End (Gene)', 'Exon Start (Gene)', 'Exon Start (Transcript)', 'Exon End (Transcript)', 'Exon rank in transcript'], axis = 1)
         #grab ptm specific info
-        #alt_ptms['Protein'] = alt_ptms['PTM'].apply(lambda x: x.split('_')[0])
-        #alt_ptms['Canonical Residue'] = alt_ptms['PTM'].apply(lambda x: x.split('_')[1][0])
-        #alt_ptms['Canonical Protein Location (AA)'] = alt_ptms['PTM'].apply(lambda x: x.split('_')[1][1:])
+        alt_ptms['Canonical Protein Position (AA)'] = alt_ptms['Source of PTM'].apply(lambda x: x.split('_')[1][1:] if x == x else np.nan)
               
         #add ptms that were unsuccessfully mapped to alternative transcripts
         alternative = self.proteins.dropna(subset = 'Alternative Transcripts (All)').copy()
@@ -664,125 +763,239 @@ class PTM_mapper:
         alternative = alternative.explode('Alternative Transcripts (All)').reset_index()
         alternative = alternative[['UniProtKB/Swiss-Prot ID', 'Alternative Transcripts (All)']]
         alternative = alternative[alternative['Alternative Transcripts (All)'].isin(available_transcripts)]
-        ptms = self.ptm_info.reset_index()[['index', 'Protein']].drop_duplicates()
-        ptms = ptms.rename({'index':'PTM'}, axis = 1)
+        alternative = alternative.rename({'UniProtKB/Swiss-Prot ID':'Protein', 'Alternative Transcripts (All)':'Transcript stable ID'}, axis = 1)
+        ptms = self.ptm_info.reset_index()[['PTM', 'Protein', 'PTM Location (AA)', 'Exon stable ID', 'Ragged', 'Modifications', 'Residue']].drop_duplicates()
+        ptms = ptms.rename({'PTM':'Source of PTM','PTM Location (AA)':'Canonical Protein Location (AA)', 'Residue':'Canonical Residue'}, axis = 1)
         alternative = alternative.merge(ptms, on = 'Protein')
-        #identify PTMs that were found in alternative transcripts
-        #missing = ~alternative[['Transcript stable ID', 'PTM']].isin(alt_ptms[['Transcript stable ID', 'PTM']])
-        #missing_alternative = alternative[missing]
-
         
-        alt_ptms = alt_ptms.merge(alternative, on = ['Transcript stable ID', 'PTM'], how = 'outer')
-        alt_ptms = alt_ptms.rename({'Alternative Transcripts (All)': 'Transcript stable ID', 'UniProtKB/Swiss-Prot ID':'Protein', 'Position': 'Alternative Protein Location (AA)', 
-'Residue':'Alternative Residue'}, axis = 1)
-        alt_ptms['Canonical Residue'] = alt_ptms['PTM'].apply(lambda x: x.split('_')[1][0])
-        alt_ptms['Canonical Protein Location (AA)'] = alt_ptms['PTM'].apply(lambda x: x.split('_')[1][1:])
+        #identify ptms not present in isoforms
+        potential_ptm_isoform_labels = alternative['Transcript stable ID'] + '_' + alternative['Source of PTM']
+        mapped_ptm_isoform_labels = alt_ptms['Transcript stable ID'] + '_' + alt_ptms['Source of PTM']
+        missing = alternative[~potential_ptm_isoform_labels.isin(mapped_ptm_isoform_labels)]
+        missing = missing.rename({'Transcripts':'Transcript stable ID','Exon stable ID': 'Source Exons', 'PTM':'Source of PTM', 'Residue':'Canonical Residue'}, axis = 1)
+        #add genes
+        missing = missing.merge(self.transcripts['Gene stable ID'].reset_index(), on = 'Transcript stable ID', how = 'left')
+        #add gene info
+        missing = missing.merge(self.genes[['Chromosome/scaffold name', 'Strand']].reset_index(), on = 'Gene stable ID', how = 'left')
+        alt_ptms = pd.concat([alt_ptms, missing])
+        
        
         
         #rename columns
-        alt_ptms = alt_ptms.rename({'Exon stable ID': 'Exon ID (Alternative)', 'Source Exon': 'Exon ID (Canonical)', 'Transcript stable ID': 'Alternative Transcript'}, axis = 1)
+        alt_ptms = alt_ptms.rename({'Exon stable ID': 'Exon ID (Alternative)', 'Source Exons': 'Exon ID (Canonical)', 'Transcript stable ID': 'Alternative Transcript'}, axis = 1)
         
         #identify cases where ptms were successfully or unsuccessfully mapped
         alt_ptms["Mapping Result"] = np.nan
         ###success = gene location conserved and residue matches
-        success = alt_ptms['Residue'] == alt_ptms['Canonical Residue']
+        success = alt_ptms['Alternative Residue'] == alt_ptms['Canonical Residue']
         alt_ptms.loc[success, 'Mapping Result'] = 'Success'
         ###residue mismatch = gene location conserved and in frame, but residue does not match
-        mismatch = (alt_ptms['Frame'].apply(lambda x: False if x != x else float(x) == 1)) & (alt_ptms['Residue'] != alt_ptms['PTM'].apply(lambda x: x.split('_')[1][0]))
+        mismatch = (alt_ptms['Frame'].apply(lambda x: False if x != x else float(x) == 1)) & (alt_ptms['Alternative Residue'] != alt_ptms['Canonical Residue'])
         alt_ptms.loc[mismatch, 'Mapping Result'] = 'Residue Mismatch'
         ###frameshift = gene location conserved but ptm site no longer in frame
         frameshift = alt_ptms['Frame'].apply(lambda x: False if x != x else float(x) > 1)
         alt_ptms.loc[frameshift, 'Mapping Result'] = 'Different Reading Frame'
         ###ragged insertion = ptm exists at boundary and changes as a result of shifting boundary
-        ragged_insertion = (alt_ptms['Ragged']) & (alt_ptms['Residue'] != alt_ptms['Canonical Residue'])
+        ragged_insertion = (alt_ptms['Ragged'].apply(lambda x: utility.stringToBoolean(x))) & (alt_ptms['Alternative Residue'] != alt_ptms['Canonical Residue'])
         alt_ptms.loc[ragged_insertion, 'Mapping Result'] = 'Ragged Insertion'
         ###noncoding region = gene location conserved, but is now in noncoding region (usually due to alternative promoter)
         alt_ptms.loc[alt_ptms['Frame'] == -1, 'Mapping Result'] = 'Noncoding Region'
         no_coding = ((~alt_ptms['Exon ID (Alternative)'].isna()) & (alt_ptms['Frame'].isna()))
         alt_ptms.loc[no_coding, 'Mapping Result'] = 'Found, But Missing Coding Info'
         ###not found = gene location is not conserved
-        alt_ptms.loc[alt_ptms['Exon ID (Alternative)'].isna(), 'Mapping Result'] = 'Not Found'
+        alt_ptms.loc[alt_ptms['Alternative Protein Position (AA)'].isna(), 'Mapping Result'] = 'Not Found'
+        ###Ragged Insertion = missing ptm at a exon-exon junction
+        alt_ptms.loc[(alt_ptms['Mapping Result'] == 'Not Found') & (alt_ptms['Ragged'] == 'True'), 'Mapping Result'] = 'Ragged Insertion'
         
         self.alternative_ptms = alt_ptms
+        os.remove(config.processed_data_dir + 'tmp_alt_ptms.csv')
     
-    def calculate_PTMconservation(self):
-        if self.alternative_ptms is None:
-            raise AttributeError('No alternative_ptms attribute. Must first map ptms to alternative transcripts with mapPTMsToAlternative()')
+    def calculate_PTMconservation(self, transcript_subset = None, isoform_subset = None, save_col = 'PTM Conservation Score', save_transcripts = True, return_score = False, unique_isoforms = True):
+        if unique_isoforms:
+            if self.isoform_ptms is None:
+                self.getIsoformSpecificPTMs()
+            
+            if isoform_subset is not None:
+                alt_ptms = self.isoform_ptms[self.isoform_ptms['Isoform ID'].isin(isoform_subset)].copy()
+            elif transcript_subset is not None:
+                raise ValueError('When looking at unique isoforms, indicate the subset of isoforms uing isoform ids rather than transcript ids')
+            else:
+                alt_ptms = self.isoform_ptms.copy()
+                
+            conserved_transcripts = alt_ptms.dropna(subset = 'Alternative Residue').groupby('Source of PTM')['Isoform ID'].apply(list)
+            lost_transcripts = alt_ptms[alt_ptms['Alternative Residue'].isna()].groupby('Source of PTM')['Isoform ID'].apply(list)
+                
         else:
-            #conserved transcripts
-            conserved_transcripts = self.alternative_ptms[self.alternative_ptms['Mapping Result'] == 'Success'].groupby('PTM')['Alternative Transcript'].apply(list)
-            num_conserved_transcripts = conserved_transcripts.apply(len)
-            conserved_transcripts = conserved_transcripts.apply(','.join)
-            
-            #lost transcripts
-            lost_transcripts = self.alternative_ptms[self.alternative_ptms['Mapping Result'] != 'Success'].groupby('PTM')['Alternative Transcript'].apply(list)
-            num_lost_transcripts = lost_transcripts.apply(len)
-            lost_transcripts = lost_transcripts.apply(','.join)
-            
-            #save results in ptm_info
+            if self.alternative_ptms is None:
+                raise AttributeError('No alternative_ptms attribute. Must first map ptms to alternative transcripts with mapPTMsToAlternative()')
+            else:
+                if transcript_subset is not None:
+                    alt_ptms = self.alternative_ptms[self.alternative_ptms['Alternative Transcript'].isin(transcript_subset)].copy()
+                else:
+                    alt_ptms = self.alternative_ptms.copy()
+                    
+            conserved_transcripts = alt_ptms[alt_ptms['Mapping Result'] == 'Success'].groupby('Source of PTM')['Alternative Transcript'].apply(list)
+            lost_transcripts = alt_ptms[alt_ptms['Mapping Result'] != 'Success'].groupby('Source of PTM')['Alternative Transcript'].apply(list)
+        
+        #conserved transcripts
+        num_conserved_transcripts = conserved_transcripts.apply(len)
+        conserved_transcripts = conserved_transcripts.apply(','.join)
+        
+        #lost transcripts
+        num_lost_transcripts = lost_transcripts.apply(len)
+        lost_transcripts = lost_transcripts.apply(','.join)
+        
+        #save results in ptm_info
+        if save_transcripts:
             self.ptm_info['Number of Conserved Transcripts'] = num_conserved_transcripts
             self.ptm_info['Conserved Transcripts'] = conserved_transcripts
             self.ptm_info['Number of Lost Transcripts'] = num_lost_transcripts
             self.ptm_info['Lost Transcripts'] = lost_transcripts
-            
-            #calculate fraction of transcripts which have conserved PTM
-            conservation_score = []
-            for ptm in self.ptm_info.index:
-                num_conserved = self.ptm_info.loc[ptm,'Number of Conserved Transcripts']
-                num_lost = self.ptm_info.loc[ptm,'Number of Lost Transcripts']
-                #check if there are any conserved transcripts (or if not and is NaN)
-                if num_conserved != num_conserved and num_lost == num_lost:
-                    conservation_score.append(0)
-                elif num_conserved != num_conserved and num_lost != num_lost:
-                    conservation_score.append(1)
-                #check if any lost transcripts: if not replace NaN with 0 when calculating
-                elif num_lost != num_lost and num_conserved == num_conserved:
-                    conservation_score.append(1)
-                else:
-                    conservation_score.append(num_conserved/(num_conserved+num_lost))
-            self.ptm_info['PTM Conservation Score'] = conservation_score
+        
+        #calculate fraction of transcripts which have conserved PTM
+        conservation_score = []
+        for ptm in self.ptm_info.index:
+            num_conserved = self.ptm_info.loc[ptm,'Number of Conserved Transcripts']
+            num_lost = self.ptm_info.loc[ptm,'Number of Lost Transcripts']
+            #check if there are any conserved transcripts (or if not and is NaN)
+            if num_conserved != num_conserved and num_lost == num_lost:
+                conservation_score.append(0)
+            elif num_conserved != num_conserved and num_lost != num_lost:
+                conservation_score.append(1)
+            #check if any lost transcripts: if not replace NaN with 0 when calculating
+            elif num_lost != num_lost and num_conserved == num_conserved:
+                conservation_score.append(1)
+            else:
+                conservation_score.append(num_conserved/(num_conserved+num_lost))
+        
+        self.ptm_info[save_col] = conservation_score
+        if return_score:
+            if unique_isoforms:
+                num_isoforms = alt_ptms['Isoform ID'].nunique()
+            else:
+                num_isoforms = alt_ptms['Alternative Transcript'].nunique()
+            return self.ptm_info[self.ptm_info[save_col] == 1].shape[0]/self.ptm_info.shape[0], num_isoforms
         
     def addSpliceEventsToAlternative(self, splice_events_df):
-        splice_events_df = splice_events_df[['Exon ID (Canonical)', 'Alternative Transcript', 'Event Type']]
-        self.alternative_ptms = self.alternative_ptms.merge(splice_events_df, on = ['Exon ID (Canonical)', 'Alternative Transcript'], how = 'left')
+        splice_events_df = splice_events_df[['Exon ID (Canonical)', 'Exon ID (Alternative)', 'Alternative Transcript', 'Event Type']].drop_duplicates()
+        alternative_ptms = self.alternative_ptms.copy()
+        alternative_ptms = alternative_ptms.drop('Exon ID (Alternative)', axis = 1)
+        alternative_ptms['Exon ID (Canonical)'] = alternative_ptms['Exon ID (Canonical)'].apply(lambda x: x.split(';'))
+        alternative_ptms = alternative_ptms.explode('Exon ID (Canonical)').drop_duplicates()
+        alternative_ptms = alternative_ptms.merge(splice_events_df, on = ['Exon ID (Canonical)', 'Alternative Transcript'], how = 'left')
+        
+        
+        exploded_ptms = self.explode_PTMinfo()
+        #check PTMs in mutually exclusive exons to see if they might be conserved
+        mxe_ptm_candidates = alternative_ptms[alternative_ptms['Event Type'] == 'Mutually Exclusive'].copy()
+        alternative_ptms = alternative_ptms[alternative_ptms['Event Type'] != 'Mutually Exclusive']
+        alt_residue_list = []
+        alt_position_list = []
+        for i, row in mxe_ptm_candidates.iterrows():
+            if not utility.stringToBoolean(row['Ragged']):
+                ptm = row['Source of PTM']
+                
+                #get canonical exon info
+                canonical_exon_id = row['Exon ID (Canonical)']
+                ptm_info_of_interest = exploded_ptms.loc[(exploded_ptms['PTM'] == ptm) & (exploded_ptms['Exon stable ID'] == canonical_exon_id)].squeeze()
+                canonical_exon = self.exons[(self.exons['Exon stable ID'] == canonical_exon_id) & (self.exons['Transcript stable ID'] == ptm_info_of_interest['Transcripts'])].squeeze()
+                canonical_exon_sequence = Seq(canonical_exon['Exon AA Seq (Full Codon)'])
+                
+                #get alternative_exon info
+                alternative_exon_id = row['Exon ID (Alternative)']
+                alternative_exon = self.exons[(self.exons['Exon stable ID'] == alternative_exon_id) & (self.exons['Transcript stable ID'] == row['Alternative Transcript'])].squeeze()
+                alternative_exon_sequence = Seq(alternative_exon['Exon AA Seq (Full Codon)'])
+                
+                #align sequences
+                alignment = returnAlignment(canonical_exon_sequence, alternative_exon_sequence, canonical_exon_id, alternative_exon_id)
+                
+                #find location of PTM in canonical exon 
+                canonical_gap_map = getGapMaps(alignment, canonical_exon_id)
+                ptm_pos_in_exon = int(float(ptm_info_of_interest['Exon Location (AA)'])) - 1
+                ptm_pos_in_alignment = canonical_gap_map[ptm_pos_in_exon]
+                
+                #look for ptm in alternative sequence, if present, find location of ptm in alternative isoform
+                alternative_gap_map = getGapMaps(alignment, alternative_exon_id, reverse = True)
+                if ptm_pos_in_alignment in alternative_gap_map.keys():
+                    isoform_sequence = self.transcripts.loc[row['Alternative Transcript'], 'Amino Acid Sequence']
+                    ptm_pos_in_alt_exon = alternative_gap_map[ptm_pos_in_alignment]
+                    ptm_pos_in_isoform = int(np.ceil(float(alternative_exon['Exon Start (Protein)'])))+ptm_pos_in_alt_exon+1
+                    alternative_residue = alternative_exon_sequence[ptm_pos_in_alt_exon]
+                    
+                    if alternative_residue == row['Canonical Residue']:
+                        alt_residue_list.append(alternative_residue)
+                        alt_position_list.append(ptm_pos_in_isoform)
+                    else:
+                        alt_residue_list.append(np.nan)
+                        alt_position_list.append(np.nan)
+                else:
+                    alt_residue_list.append(np.nan)
+                    alt_position_list.append(np.nan)
+            else:
+                alt_position_list.append(np.nan)
+                alt_residue_list.append(np.nan)
+                
+        mxe_ptm_candidates['Alternative Residue'] = alt_residue_list
+        mxe_ptm_candidates['Alternative Protein Position (AA)'] = alt_position_list
+        
+        #replace mxe ptm candidates with new info
+        mxe_ptm_candidates['Mapping Result'] = mxe_ptm_candidates.apply(lambda x: 'Success' if x['Alternative Residue'] == x['Alternative Residue'] else 'Not Found', axis = 1)
+        alternative_ptms = pd.concat([alternative_ptms, mxe_ptm_candidates])
+        
+        #collapse into rows for matching event types and exon ids
+        cols = [col for col in alternative_ptms.columns if col != 'Event Type' and col != 'Source Exons']
+        alternative_ptms = alternative_ptms.replace(np.nan, 'nan')
+        alternative_ptms = alternative_ptms.groupby(cols)['Event Type'].agg(';'.join).reset_index()
+        alternative_ptms = alternative_ptms.replace('nan', np.nan)
+        
+        #save to mapper object
+        self.alternative_ptms = alternative_ptms.copy()
     
     def annotateAlternativePTMs(self):
         #self.alternative_ptms['Canonical PTM'] = self.alternative_ptms['Protein'] + '_' + self.alternative_ptms['Residue'] + self.alternative_ptms['Canonical Protein Location (AA)'].astype(str)
-        if 'TRIFID Score' in self.transcripts.columns:
+        if 'TRIFID Score' in self.transcripts.columns and 'TRIFID Score' not in self.alternative_ptms.columns:
             self.alternative_ptms = self.alternative_ptms.merge(self.transcripts['TRIFID Score'], right_index = True, left_on = 'Alternative Transcript', how = 'left')
             
-        
+        if os.path.exists(config.processed_data_dir + 'splice_events.csv') and 'Event Type' not in self.alternative_ptms.columns:
+            print('Adding splice events to alternative dataframes and checking MXE events for conserved PTMs')
+            sevents = pd.read_csv(config.processed_data_dir + 'splice_events.csv')
+            self.addSpliceEventsToAlternative(sevents)
+            
+
         print('Getting flanking sequences around PTMs in alternative isoforms')
         flank = []
-        for pos, transcript_id in zip(self.alternative_ptms['Alternative Protein Location (AA)'], self.alternative_ptms['Alternative Transcript']):
+        for pos, transcript_id in zip(self.alternative_ptms['Alternative Protein Position (AA)'], self.alternative_ptms['Alternative Transcript']):
             if pos != pos:
                 flank.append(np.nan)
             else:
                 flank.append(self.getFlankingSeq(int(pos), transcript_id, flank_size = 10))
         self.alternative_ptms['Flanking Sequence'] = flank
         
+
         print('Getting tryptic fragments that include each PTM in alternative isoforms')
         tryptic = []
-        for pos, transcript_id in zip(self.alternative_ptms['Alternative Protein Location (AA)'], self.alternative_ptms['Alternative Transcript']):
+        for pos, transcript_id in zip(self.alternative_ptms['Alternative Protein Position (AA)'], self.alternative_ptms['Alternative Transcript']):
             if pos != pos:
                 tryptic.append(np.nan)
             else:
                 tryptic.append(self.getTrypticFragment(int(pos), transcript_id))
         self.alternative_ptms['Tryptic Fragment'] = tryptic
-        
-        if os.path.exists(config.processed_data_dir + 'splice_events.csv'):
-            sevents = pd.read_csv(config.processed_data_dir + 'splice_events.csv')
-            self.addSpliceEventsToAlternative(sevents)
-            
-        self.alternative_ptms = self.alternative_ptms.merge(self.transcripts['TRIFID Score'], right_index = True, left_on = 'Alternative Transcript', how = 'left')
-            
-        
-        
-            
-        
-    def savePTMs(self):
-        self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
 
+            
+
+    def getIsoformSpecificPTMs(self, required_length = 20):
+        """
+        Reduce alternative ptm dataframe to ptms that are unique to a specific protein sequence, rather than a specific transcript
+        """
+        isoforms = self.isoforms[['Isoform ID', 'Transcript stable ID', 'Isoform Length']].copy()
+        isoforms['Transcript stable ID'] = isoforms['Transcript stable ID'].apply(lambda x: x.split(';'))
+        isoforms = isoforms.explode('Transcript stable ID')
+        isoforms = isoforms.rename({'Transcript stable ID': 'Alternative Transcript'}, axis = 1)
+        isoform_ptms = self.alternative_ptms.merge(isoforms, on = 'Alternative Transcript', how = 'left').copy()
+        isoform_ptms = isoform_ptms[isoform_ptms['Isoform Length'] >= required_length]
+        isoform_ptms = isoform_ptms[['Isoform ID', 'Source of PTM', 'Frame', 'Alternative Protein Position (AA)', 'Alternative Residue', 'Modifications','Flanking Sequence', 'Tryptic Fragment']]
+        isoform_ptms = isoform_ptms.drop_duplicates()
+        self.isoform_ptms = isoform_ptms
         
     def load_PTMmapper(self):
         #check if each data file exists: if it does, load into mapper object
@@ -804,6 +1017,12 @@ class PTM_mapper:
         else:
             self.genes = None
             
+        if os.path.exists(config.processed_data_dir + 'isoforms.csv'):
+            print('Loading unique protein isoforms')
+            self.isoforms = pd.read_csv(config.processed_data_dir + 'isoforms.csv')
+        else:
+            self.isoforms = None
+            
         if os.path.exists(config.processed_data_dir + 'proteins.csv'):
             print('Loading protein-specific info')
             self.proteins = pd.read_csv(config.processed_data_dir + 'proteins.csv', index_col = 0)
@@ -813,12 +1032,25 @@ class PTM_mapper:
         if os.path.exists(config.processed_data_dir + 'ptm_info.csv'):
             print('Loading information on PTMs on canonical proteins')
             self.ptm_info = pd.read_csv(config.processed_data_dir + 'ptm_info.csv',index_col = 0)
+            
+            #check to see if ptm_info is collapsed or not (if each row is a unique ptm)
+            if len(np.unique(self.ptm_info.index)) != self.ptm_info.shape[0]:
+                self.ptm_info = self.ptm_info.reset_index()
+                self.ptm_info = self.ptm_info.rename({'index':'PTM'}, axis = 1)
         else:
             self.ptm_info = None
             
+        if os.path.exists(config.processed_data_dir + 'ptm_coordinates.csv'):
+            print('Loading information on PTMs on canonical proteins')
+            self.ptm_coordinates = pd.read_csv(config.processed_data_dir + 'ptm_coordinates.csv',index_col = 0,
+                                                dtype = {'Source of PTM': str, 'Chromosome/scaffold name': str, 'Gene Location':int,
+                                                'Ragged': str})
+        else:
+            self.ptm_coordinates = None
+            
         if os.path.exists(config.processed_data_dir + 'alternative_ptms.csv'):
             print('Loading information on PTMs on alternative proteins')
-            self.alternative_ptms = pd.read_csv(config.processed_data_dir + 'alternative_ptms.csv')
+            self.alternative_ptms = pd.read_csv(config.processed_data_dir + 'alternative_ptms.csv', dtype = {'Exon ID (Alternative)':str, 'Chromosome/scaffold name': str, 'Ragged':str, 'Genomic Coordinates':str, 'Second Exon': str, 'Alternative Residue': str, 'Protein':str})
         else:
             self.alternative_ptms = None
 
@@ -862,6 +1094,14 @@ def getRaggedCoordinates(chromosome, gene_loc, ragged_loc, distance_to_bound, st
             coords = f"chr{chromosome}:{ragged_loc},{gene_loc-1}-{gene_loc}:{strand}"
     return coords
     
+def getPTMExonRank(row):
+    """
+    Given a single ptm instance from ptm_info, determine the rank of the exon that the PTM is located in. Assumes exon cut information has been added and it has already been split into list. Used by MapPTMs_all() function.
+    """
+    normed_cuts = row['Transcript Location (NC)'] - row['Exon cuts'] 
+    for c in range(len(normed_cuts)):
+        if normed_cuts[c] < 0:
+            return c + 1
     
 def getPTMLoc(exon, mapper, gene_loc, strand):
     #make sure transcript associated with exon contains coding information
@@ -874,6 +1114,96 @@ def getPTMLoc(exon, mapper, gene_loc, strand):
     else:
         return np.nan, np.nan, np.nan
 
+def convertToHG19(hg38_location, chromosome, strand, liftover_object = None):
+    """
+    Use pyliftover to convert from hg38 to hg19 coordinates systems
+    
+    Parameters
+    ----------
+    hg38_location: int
+        genomic location to convert, in hg38 version of Ensembl
+        
+    Returns
+    -------
+    hg19_coordinates: int
+        genomic coordinates in hg19 version of Ensembl
+    """
+    if liftover_object is None:
+        liftover_object = pyliftover('hg19','hg38')
+    
+    if strand == 1:
+        strand = '+'
+    else:
+        strand = '-'
+    
+    chromosome = f'chr{chromosome}'
+    results = liftover_object.convert_coordinate(chromosome, hg38_location - 1, strand)
+    if len(results) > 0:
+        new_chromosome = results[0][0]
+        new_strand = results[0][2]
+        if new_chromosome == chromosome and new_strand == strand:
+            return results[0][1] + 1
+        else:
+            return -1
+    else:
+        return np.nan
+        
+        
+def returnAlignment(seq1, seq2, canonical_exon_id, alternative_exon_id):
+    """
+    Given two exon sequences in amino acids (usually two exons thought to be mutually exclusive), align the two sequences and return aligned object
+    
+    Parameters
+    ----------
+    seq1: str
+        amino acid sequence associated with canonical exon
+    seq2: str
+        amino acid sequence associated with alternative exon
+    canonical_exon_id: str
+        Ensembl id associated with canonical exon
+    alternative_exon_id: str
+        Ensembl id associated with alternative exon
+        
+    Returns
+    -------
+    aln: Cogent3 alignement object
+        alignment of the two exon sequences
+    """
+    #align (first gap has -10 penalty, subsequent have -2)
+    alignments = pairwise2.align.globalxs(seq1, seq2, -10, -2)
+    
+    #extract alignment sequences
+    aln_seq1 = alignments[0][0]
+    aln_seq2 = alignments[0][1]
+
+    #use cogent
+    aln = make_aligned_seqs([[canonical_exon_id,aln_seq1], [alternative_exon_id, aln_seq2]], array_align=True, moltype ='protein')
+    return aln
+    
+def getGapMaps(aln, exon_id, reverse = False):
+    """
+    Given an alignment object, return the gap maps for each sequence in the alignment
+    
+    Parameters
+    ----------
+    aln: Cogent3 alignment object, possibly from returnAlignment function()
+        alignment of two sequences
+    exon_id: str
+        exon_id for which to get the gap map
+    
+    Returns
+    -------
+    alignment_map: dict
+        dictionary indicating the location of each residue in the canonical sequence in the gapped alignment
+    """
+    #get gapped sequence
+    gap_alignment = aln.get_gapped_seq(exon_id)
+    if reverse:
+        align_map = gap_alignment.gap_maps()[1]
+    else:
+        align_map = gap_alignment.gap_maps()[0]
+    return align_map
+    
 
 def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fname = 'exon_sequences.fasta.gz',
                 coding_sequences_fname = 'coding_sequences.fasta.gz', trifid_fname = 'APPRIS_functionalscores.txt'):
@@ -897,7 +1227,7 @@ def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fna
         print('Extracting transcript sequence information')
         #load coding sequences
         if os.path.exists(config.source_data_dir+coding_sequences_fname):
-            coding_sequences = utility.processEnsemblFasta(config.source_data_dir+'coding_sequences.fasta.gz', id_col = 'Transcript stable ID', seq_col = 'Coding Sequence')
+            coding_sequences = utility.processEnsemblFasta(config.source_data_dir+coding_sequences_fname, id_col = 'Transcript stable ID', seq_col = 'Coding Sequence')
             coding_sequences.index = coding_sequences['Transcript stable ID']
             coding_sequences = coding_sequences.drop('Transcript stable ID', axis = 1)
         else:
@@ -920,40 +1250,41 @@ def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fna
         mapper.exons = processing.getAllExonSequences(mapper.exons, mapper.transcripts, mapper.genes)
         mapper.exons.to_csv(config.processed_data_dir + 'exons.csv', index = False)
         
-    print('Identifying transcripts with matching information from UniProt canonical proteins in ProteomeScout')
-    processing.getMatchedTranscripts(mapper.transcripts, update = restart_all)
+    if config.available_transcripts is None:
+        print('Identifying transcripts with matching information from UniProt canonical proteins in ProteomeScout')
+        processing.getMatchedTranscripts(mapper.transcripts, update = restart_all)
     
     if mapper.proteins is None or restart_all:
         print('Getting protein-specific information')
         mapper.proteins = processing.getProteinInfo(mapper.transcripts, mapper.genes)
         mapper.proteins.to_csv(config.processed_data_dir + 'proteins.csv')
         
-    print('Saving data files\n')
-    mapper.exons.to_csv(config.processed_data_dir + 'exons.csv', index = False)
-    mapper.transcripts.to_csv(config.processed_data_dir + 'transcripts.csv')
+    if mapper.isoforms is None or restart_all:
+        print('Getting unique protein isoforms from transcript data')
+        mapper.isoforms = processing.getIsoformInfo(mapper.transcripts)
+        mapper.isoforms.to_csv(config.processed_data_dir + 'isoforms.csv', index = False)
 
     if restart_all:
         restart_mapping = True
         
     if mapper.ptm_info is None or restart_mapping:
-        mapper.findAllPTMs()
+        mapper.findAllPTMs(collapse = False)
         print('saving\n')
         mapper.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
         
-    if 'Gene Location (NC)' not in mapper.ptm_info.columns:
+    if mapper.ptm_coordinates is None or restart_mapping:
+        print('Mapping PTMs to their genomic location')
         mapper.mapPTMs_all(restart = restart_mapping)
         print('saving\n')
         mapper.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
-    elif mapper.ptm_info['Gene Location (NC)'].isna().any():
-        mapper.mapPTMs_all(restart = restart_mapping)
-        print('saving\n')
-        mapper.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
+        mapper.ptm_coordinates.to_csv(config.processed_data_dir + 'ptm_coordinates.csv')
+
     
     ####run additional analysis
     if 'Tryptic Fragment' not in mapper.ptm_info.columns or restart_mapping:
         mapper.getAllTrypticFragments()
     if 'Flanking Sequence' not in mapper.ptm_info.columns or restart_mapping:
-        mapper.getAllFlankingSeqs()
+        mapper.getAllFlankingSeqs(flank_size = 10)
     if 'inDomain' not in mapper.ptm_info.columns or restart_mapping:
         mapper.findAllinDomains()
     print('saving\n')
@@ -985,4 +1316,3 @@ def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fna
         mapper.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
         
     return mapper
-    
