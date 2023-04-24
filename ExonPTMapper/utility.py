@@ -4,9 +4,11 @@ import numpy as np
 from Bio import SeqIO
 
 def stringToBoolean(string):
-    if string == 'False':
+    if type(string) == bool:
+        return string
+    elif string == 'False' or string == 'false' or string == 'No':
         return False
-    elif string == 'True':
+    elif string == 'True' or string == 'true' or string == 'Yes':
         return True
     else:
         return np.nan
