@@ -93,7 +93,7 @@ class PTM_mapper:
             if collapse:
                 #collapse rows with duplicate indexes, but different transcripts or modififications into a single row, with each transcript or modification seperated by comma
                 grouped_info = self.ptm_info.groupby(['Protein', 'Residue', 'PTM Location', 'PTM'])[['Gene', 'Transcript']].agg(','.join).reset_index()
-                grouped_mods = self.ptm_info.groupby(['Protein', 'Residue', 'PTM Location', 'PTM']).agg(lambda x: ';'.join(x.unique())).reset_index()
+                grouped_mods = self.ptm_info.groupby(['Protein', 'Residue', 'PTM Location', 'PTM']).agg(lambda x: ';'.join(np.unique(x))).reset_index()
                 self.ptm_info = pd.merge([grouped_mods, grouped_info], on = ['Protein', 'Residue', 'PTM Location', 'PTM'])
                 self.ptm_info = self.ptm_info.drop_duplicates()
                 self.ptm_info = self.ptm_info.reset_index()
@@ -333,8 +333,8 @@ class PTM_mapper:
         ptm_coordinates = ptm_coordinates.drop_duplicates()
         ptm_coordinates = ptm_coordinates.astype({'Gene Location (NC)': int, 'Strand':int, 'Ragged':bool})
         #group modifications for the same ptm in the same row
-        grouped = ptm_coordinates.groupby(['Genomic Coordinates', 'PTM', 'Chromosome/scaffold name', 'Residue', 'Strand', 'Gene Location (NC)', 'Ragged'])
-        ptm_coordinates = pd.concat([grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(lambda x: ';'.join(np.unique(x))), grouped['Exon stable ID'].agg(lambda x: ';'.join(np.unique(x)))], axis = 1)
+        grouped = ptm_coordinates.groupby(['Genomic Coordinates', 'Chromosome/scaffold name', 'Residue', 'Strand', 'Gene Location (NC)', 'Ragged'])
+        ptm_coordinates = pd.concat([grouped['PTM'].agg(lambda x: ';'.join(np.unique(x))), grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(lambda x: ';'.join(np.unique(x))), grouped['Exon stable ID'].agg(lambda x: ';'.join(np.unique(x)))], axis = 1)
         ptm_coordinates = ptm_coordinates.reset_index()
         ptm_coordinates = ptm_coordinates.rename({'PTM':'Source of PTM', 'Modification':'Modifications', 'Exon stable ID': 'Source Exons'}, axis = 1)
         ptm_coordinates.index = ptm_coordinates['Genomic Coordinates']
@@ -556,7 +556,7 @@ class PTM_mapper:
         #reduce exons dataframe to exons associated with transcripts with available information, if not provided
         if trim_exons is None:
             #identify transcripts (plus associated exons) with available transcript and amino acid sequence
-            available_transcripts = self.transcripts.dropna(subset = ['Transcript Sequence', 'Amino Acid Sequence']).index.values
+            available_transcripts = self.transcripts.dropna(subset = ['Transcript Sequence', 'Amino Acid Sequence', 'Exon Start (Protein)']).index.values
             #if desired, isolate only alternative transcripts
             if alternative_only:
                 alternative_transcripts = config.translator.loc[config.translator['Uniprot Canonical'] != 'Canonical', 'Transcript stable ID']
@@ -755,7 +755,7 @@ class PTM_mapper:
         #remove residual exon columns that are not needed
         alt_ptms = alt_ptms.drop(['Exon End (Gene)', 'Exon Start (Gene)', 'Exon Start (Transcript)', 'Exon End (Transcript)', 'Exon rank in transcript'], axis = 1)
         #grab ptm specific info
-        alt_ptms['Canonical Protein Position (AA)'] = alt_ptms['Source of PTM'].apply(lambda x: x.split('_')[1][1:] if x == x else np.nan)
+        #alt_ptms['Canonical Protein Position (AA)'] = alt_ptms['Source of PTM'].apply(lambda x: x.split('_')[1][1:] if x == x else np.nan)
               
         #add ptms that were unsuccessfully mapped to alternative transcripts
         alternative = self.proteins.dropna(subset = 'Alternative Transcripts (All)').copy()
@@ -808,7 +808,7 @@ class PTM_mapper:
         alt_ptms.loc[(alt_ptms['Mapping Result'] == 'Not Found') & (alt_ptms['Ragged'] == 'True'), 'Mapping Result'] = 'Ragged Insertion'
         
         self.alternative_ptms = alt_ptms
-        os.remove(config.processed_data_dir + 'tmp_alt_ptms.csv')
+        os.remove(config.processed_data_dir + 'temp_alt_ptms.csv')
     
     def calculate_PTMconservation(self, transcript_subset = None, isoform_subset = None, save_col = 'PTM Conservation Score', save_transcripts = True, return_score = False, unique_isoforms = True):
         if unique_isoforms:
@@ -882,7 +882,7 @@ class PTM_mapper:
         alternative_ptms = alternative_ptms.drop('Exon ID (Alternative)', axis = 1)
         alternative_ptms['Exon ID (Canonical)'] = alternative_ptms['Exon ID (Canonical)'].apply(lambda x: x.split(';'))
         alternative_ptms = alternative_ptms.explode('Exon ID (Canonical)').drop_duplicates()
-        alternative_ptms = alternative_ptms.merge(splice_events_df, on = ['Exon ID (Canonical)', 'Alternative Transcript'], how = 'left')
+        alternative_ptms = alternative_ptms.merge(splice_events_df, on = ['Exon ID (Canonical)', 'Alternative Transcript'], how = 'inner')
         
         
         exploded_ptms = self.explode_PTMinfo()
@@ -943,9 +943,10 @@ class PTM_mapper:
         alternative_ptms = pd.concat([alternative_ptms, mxe_ptm_candidates])
         
         #collapse into rows for matching event types and exon ids
-        cols = [col for col in alternative_ptms.columns if col != 'Event Type' and col != 'Source Exons']
+        alternative_ptms = alternative_ptms.drop_duplicates()
+        cols = [col for col in alternative_ptms.columns if col != 'Event Type' and col != 'Exon ID (Canonical)']
         alternative_ptms = alternative_ptms.replace(np.nan, 'nan')
-        alternative_ptms = alternative_ptms.groupby(cols)['Event Type'].agg(';'.join).reset_index()
+        alternative_ptms = alternative_ptms.groupby(cols).agg(lambda x: ';'.join(np.unique(x))).reset_index()
         alternative_ptms = alternative_ptms.replace('nan', np.nan)
         
         #save to mapper object
@@ -1053,6 +1054,8 @@ class PTM_mapper:
             self.alternative_ptms = pd.read_csv(config.processed_data_dir + 'alternative_ptms.csv', dtype = {'Exon ID (Alternative)':str, 'Chromosome/scaffold name': str, 'Ragged':str, 'Genomic Coordinates':str, 'Second Exon': str, 'Alternative Residue': str, 'Protein':str})
         else:
             self.alternative_ptms = None
+            
+        self.isoform_ptms = None
 
 
     
