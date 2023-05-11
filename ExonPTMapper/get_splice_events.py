@@ -16,7 +16,7 @@ def getEventType(gene_cstart, gene_cend, alternative_exons, strand):
     iterate through exons in alternative transcript to
     identify exon that maps similar region of genome. Identify differences between exons (on
     3' or 5' end of exon. If no alternative exons map to the same region of the genome, then this
-    is a skipped exon or mixed exon event (labeled 'skipped')
+    is a Skipped exon or mixed exon event (labeled 'Skipped')
     
     Parameters
     ----------
@@ -34,13 +34,13 @@ def getEventType(gene_cstart, gene_cend, alternative_exons, strand):
         - No Difference: while the same exon id is not present in alternative transcript, there is a different exon id that maps to the same region of the gene (no sequence difference)
         - 3' ASS: the 3' end of the canonical exon is different in the alternative transcript, but some of the gene is shared
         - 5' ASS: the 5' end of the canonical exon is different in the alternative transcript, but some of the gene is shared
-        - skipped: the genomic region that the canonical exon is found is not used in the alternative transcript. This could indicate either a mixed exon event or a skipped exon
+        - Skipped: the genomic region that the canonical exon is found is not used in the alternative transcript. This could indicate either a mixed exon event or a Skipped exon
         event
     impacted_region: tuple
         - region of the unspliced gene sequence (found in the gene dataframe created in processing.py) that is impacted by splice event. Provided as tuple: (start of region, stop of region)
     atype: string
-        - whether splice event results in a gain or loss of nucleotides. Since a 'skipped' event could potentially be a mixed exon event that could lead to either a gain or loss
-        of nucleotides in the transcript, the atype is 'unclear'. Eventually, this should be replaced by separating the skipped and mixed exon events into different categories.
+        - whether splice event results in a gain or loss of nucleotides. Since a 'Skipped' event could potentially be a mixed exon event that could lead to either a gain or loss
+        of nucleotides in the transcript, the atype is 'unclear'. Eventually, this should be replaced by separating the Skipped and mixed exon events into different categories.
     """
     event = None
     impacted_region = None
@@ -94,15 +94,15 @@ def getEventType(gene_cstart, gene_cend, alternative_exons, strand):
             break
         #check to make sure exons haven't passed canonical
         elif (gene_cend < gene_astart and strand == 1) or (gene_cstart > gene_aend and strand == -1):
-            event = 'skipped'
+            event = 'Skipped'
             alt_exon = np.nan
             impacted_region = (gene_cstart,gene_cend)
             atype = 'loss'
             break
         
-        #If there is no overlap (based on location in genome) between the canonical exon and the alternative exons, event is skipped
+        #If there is no overlap (based on location in genome) between the canonical exon and the alternative exons, event is Skipped
         if event is None:
-            event = 'skipped'
+            event = 'Skipped'
             alt_exon = np.nan
             impacted_region = (gene_cstart,gene_cend)
             atype = 'loss'
@@ -175,17 +175,17 @@ def identifySpliceEvent(canonical_exon, alternative_exons, strand, transcripts =
         ensemble exon id of the canonical exon
     - event: string
         type of splicing event
-        - conserved: ensemble exon id found in both canonical and alternative transcript
+        - Conserved: ensemble exon id found in both canonical and alternative transcript
         - No Difference: while the same exon id is not present in alternative transcript, there is a different exon id that maps to the same region of the gene (no sequence difference)
         - 3' ASS: the 3' end of the canonical exon is different in the alternative transcript, but some of the gene is shared
         - 5' ASS: the 5' end of the canonical exon is different in the alternative transcript, but some of the gene is shared
-        - skipped: the genomic region that the canonical exon is found is not used in the alternative transcript. This could indicate either a mixed exon event or a skipped exon
+        - Skipped: the genomic region that the canonical exon is found is not used in the alternative transcript. This could indicate either a mixed exon event or a Skipped exon
         event
     - impacted_region: tuple
         region of the unspliced gene sequence (found in the gene dataframe created in processing.py) that is impacted by splice event. Provided as tuple: (start of region, stop of region)
     - atype: string
-        whether splice event results in a gain or loss of nucleotides. Since a 'skipped' event could potentially be a mixed exon event that could lead to either a gain or loss
-        of nucleotides in the transcript, the atype is 'unclear'. Eventually, this should be replaced by separating the skipped and mixed exon events into different categories.
+        whether splice event results in a gain or loss of nucleotides. Since a 'Skipped' event could potentially be a mixed exon event that could lead to either a gain or loss
+        of nucleotides in the transcript, the atype is 'unclear'. Eventually, this should be replaced by separating the Skipped and mixed exon events into different categories.
     - protein_region: tuple
         region of the protein that is impacted by splice event. Could be fractional if affected region starts/stops in the middle of a codon.
     """
@@ -194,10 +194,10 @@ def identifySpliceEvent(canonical_exon, alternative_exons, strand, transcripts =
         #get location of canonical exon in gene
         gene_cstart = int(canonical_exon['Exon Start (Gene)'])
         gene_cend = int(canonical_exon['Exon End (Gene)'])
-        #based on location of exon determine what is the cause of missing exon (skipped, 3'ASS, 5'ASS)
+        #based on location of exon determine what is the cause of missing exon (Skipped, 3'ASS, 5'ASS)
         event, impacted_region, atype, alt_exon = getEventType(gene_cstart, gene_cend, alternative_exons, strand)
         #determine the region of protein (which residues) are affected by splice event
-        if event == 'skipped':
+        if event == 'Skipped':
             transcript_region = (canonical_exon['Exon Start (Transcript)'], canonical_exon['Exon End (Transcript)'])
             if canonical_exon['Transcript stable ID'] in transcripts.index.values:
                 protein_region = mapTranscriptToProt(transcripts.loc[canonical_exon['Transcript stable ID']], transcript_region)
@@ -246,8 +246,8 @@ def identifySpliceEvent(canonical_exon, alternative_exons, strand, transcripts =
         else:
             protein_region = np.nan
     else:
-        #if exon id is still in alternative transcript, exon is conserved
-        event = 'conserved'
+        #if exon id is still in alternative transcript, exon is Conserved
+        event = 'Conserved'
         impacted_region = np.nan
         alt_exon = np.nan
         atype = np.nan
@@ -310,10 +310,12 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
         #identify canonical transcript ID. If multiple, iterate through all
         canonical_trans = proteins.loc[prot, 'Canonical Transcripts']
         if isinstance(canonical_trans, str):
-            canonical_trans_list = canonical_trans.split(',')
-                #for trans in canonical_trans:
-                #    if trans in exons['Transcript stable ID'].values:
-                #        canonical_trans = trans
+            #grab all transcripts associated with the canonical isoform AND that have information in transcripts dataframe
+            canonical_trans_list = [trans for trans in canonical_trans.split(',') if trans in transcripts.index]
+            #if multiple canonical transcripts, sort by trifid score and grab the transcript with the highest trifid score
+            
+            #canonical_trans = transcripts.loc[canonical_trans_list].sort_values(by = 'TRIFID Score', ascending = False)
+            #canonical_trans = canonical_trans.index.values[0]
             for canonical_trans in canonical_trans_list:
                 #get exons and gene id associated with canonical transcript
                 canonical_exons = exons[exons['Transcript stable ID'] == canonical_trans].sort_values(by = 'Exon rank in transcript', ascending = True)
@@ -347,16 +349,17 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
                                         #get splice event
                                         sevent = identifySpliceEvent(exon_of_interest, alternative_exons, strand, transcripts)
                                         
-                                        #if skipped event, check if any potential MXE's
-                                        if sevent[1] == 'skipped':#1. Grab skipped Exon
+                                        #if Skipped event, check if any potential MXE's
+                                        if sevent[1] == 'Skipped':#1. Grab Skipped Exon
                                             sevent = checkForMXE(sevent, exon_of_interest, canonical_exons, alternative_exons) 
                                                     
-                                        #for conserved and no difference exons, check for alterations in protein sequence
-                                        elif sevent[1] == 'No Difference' or sevent[1] == 'conserved':
+                                        #for Conserved and no difference exons, check for alterations in protein sequence
+                                        elif sevent[1] == 'No Difference' or sevent[1] == 'Conserved':
                                             if sevent[1] == 'No Difference':
                                                 alt_exon_id = sevent[2]
                                             else:
                                                 alt_exon_id = canonical_exons.loc[i, 'Exon stable ID']
+                                                sevent[2] = alt_exon_id
                                             alt_exon = alternative_exons[alternative_exons['Exon stable ID'] == alt_exon_id].squeeze()
                                             #check for different amino acid sequence
                                             alt_seq = alt_exon['Exon AA Seq (Full Codon)']
@@ -448,17 +451,17 @@ def checkForMXE(sevent, canonical_exon, canonical_exons, alternative_exons):
         canonical_exons_genomic_locations = canonical_exons_genomic_locations + list(range(int(row["Exon Start (Gene)"]),int(row["Exon End (Gene)"])))
     canonical_exons_genomic_locations = set(canonical_exons_genomic_locations)
     
-    #extract location of skipped exon
-    skipped_exon_start = sevent[3][0]
-    skipped_exon_stop = sevent[3][1]
+    #extract location of Skipped exon
+    Skipped_exon_start = sevent[3][0]
+    Skipped_exon_stop = sevent[3][1]
     
-    #find the closest exons in the alternative transcript on either side of the skipped exon
-    downstream_exon, downstream_intersection, upstream_exon, upstream_intersection = findNearbyExons(alternative_exons, canonical_exons_genomic_locations, skipped_exon_start, skipped_exon_stop)
+    #find the closest exons in the alternative transcript on either side of the Skipped exon
+    downstream_exon, downstream_intersection, upstream_exon, upstream_intersection = findNearbyExons(alternative_exons, canonical_exons_genomic_locations, Skipped_exon_start, Skipped_exon_stop)
     
     
     #check if upstream/downstream exon intersects at all with canonical_transcript exons.
     #If it does not, validate potential MXE with the following criteria
-    #1) make sure there are no exons between the skipped exon and potential MXE in the canonical transcript
+    #1) make sure there are no exons between the Skipped exon and potential MXE in the canonical transcript
     #2) make sure that exon lengths are similar
     #3) make sure reading frame is not altered (same multiple of 3 base pairs)
     #4) make sure sequences are homologous
@@ -501,15 +504,15 @@ def checkForMXE(sevent, canonical_exon, canonical_exons, alternative_exons):
     
            
 
-def findNearbyExons(alternative_exons, canonical_exon_range_list, skipped_exon_start, skipped_exon_end):
+def findNearbyExons(alternative_exons, canonical_exon_range_list, Skipped_exon_start, Skipped_exon_end):
     ## Preprocess and drop any information that does not have the location of the exon 
     alternative_exons = alternative_exons[alternative_exons["Exon Start (Gene)"] != 'no match']
     
-    # Calculate the distance of the each exon in the alternative transcript to the skipped exon location
-    alternative_exons["Cgene Start Difference"] =skipped_exon_start - alternative_exons["Exon End (Gene)"].apply(int)
-    alternative_exons["Cgene End Difference"] = alternative_exons["Exon Start (Gene)"].apply(int) - skipped_exon_end
+    # Calculate the distance of the each exon in the alternative transcript to the Skipped exon location
+    alternative_exons["Cgene Start Difference"] =Skipped_exon_start - alternative_exons["Exon End (Gene)"].apply(int)
+    alternative_exons["Cgene End Difference"] = alternative_exons["Exon Start (Gene)"].apply(int) - Skipped_exon_end
     
-    #extract alternative exons that are downstream of skipped exon location (earlier in the gene)
+    #extract alternative exons that are downstream of Skipped exon location (earlier in the gene)
     downstream_exon =  alternative_exons[alternative_exons["Cgene Start Difference"] > 0]
     
     #check if there are any downstream exons at all
@@ -521,7 +524,7 @@ def findNearbyExons(alternative_exons, canonical_exon_range_list, skipped_exon_s
     else:
         downstream_intersection = None
     
-    #extract alternative exons that are upstream of skipped exon location (earlier in the gene)
+    #extract alternative exons that are upstream of Skipped exon location (earlier in the gene)
     upstream_exon =  alternative_exons[alternative_exons["Cgene End Difference"] > 0]
     #check if there are any upstream exons at all
     if upstream_exon.shape[0] > 0:
@@ -537,41 +540,41 @@ def findNearbyExons(alternative_exons, canonical_exon_range_list, skipped_exon_s
 def calculate_intersection(range1, range2):
     return len(range1.intersection(range2))
         
-def verifyExonAdjacency(alternative_exon, canonical_exons, skipped_exon, direction = 'upstream'):
+def verifyExonAdjacency(alternative_exon, canonical_exons, Skipped_exon, direction = 'upstream'):
     if direction == 'downstream':
         downstream_start = int(alternative_exon['Exon End (Gene)'])
         
-        #check for canonical exons that are upstream of the downstream exon (same direction as skipped exon)
+        #check for canonical exons that are upstream of the downstream exon (same direction as Skipped exon)
         upstream_of_downstream_exon = canonical_exons['Exon Start (Gene)'].astype(int) > downstream_start
-        #check for canonical exons that are downstream of the skipped exon
-        downstream_of_skipped = canonical_exons['Exon Start (Gene)'].astype(int) < skipped_exon['Exon Start (Gene)']
+        #check for canonical exons that are downstream of the Skipped exon
+        downstream_of_Skipped = canonical_exons['Exon Start (Gene)'].astype(int) < Skipped_exon['Exon Start (Gene)']
         
-        #if there are any canonical exons that are in between the skipped exon and the potential MXE, both of the above will be true and it is not an actual MXE
-        return ~((upstream_of_downstream_exon) & (downstream_of_skipped)).any()
+        #if there are any canonical exons that are in between the Skipped exon and the potential MXE, both of the above will be true and it is not an actual MXE
+        return ~((upstream_of_downstream_exon) & (downstream_of_Skipped)).any()
         
     elif direction == 'upstream':
         upstream_end = int(alternative_exon['Exon End (Gene)'])
         
-        #check for canonical exons that are downstream of the upstream exon (same direction as skipped exon)
+        #check for canonical exons that are downstream of the upstream exon (same direction as Skipped exon)
         downstream_of_upstream_exon = canonical_exons['Exon End (Gene)'].astype(int) < upstream_end
-        #check for canonical exons that are upstreamstream of the skipped exon
-        upstream_of_skipped = canonical_exons['Exon End (Gene)'].astype(int) > skipped_exon['Exon End (Gene)']
+        #check for canonical exons that are upstreamstream of the Skipped exon
+        upstream_of_Skipped = canonical_exons['Exon End (Gene)'].astype(int) > Skipped_exon['Exon End (Gene)']
         
-        #if there are any canonical exons that are in between the skipped exon and the potential MXE, both of the above will be true and it is not an actual MXE
-        return ~((downstream_of_upstream_exon) & (upstream_of_skipped)).any()
+        #if there are any canonical exons that are in between the Skipped exon and the potential MXE, both of the above will be true and it is not an actual MXE
+        return ~((downstream_of_upstream_exon) & (upstream_of_Skipped)).any()
         
-def validatePotentialMXE(canonical_exons, skipped_exon, alternative_exon, direction = 'downstream',
+def validatePotentialMXE(canonical_exons, Skipped_exon, alternative_exon, direction = 'downstream',
                         max_aa_distance = 20, min_similarity = 0.15):
     #validate candidate MXE is in coding region
     is_coding = (alternative_exon['Exon Start (Protein)'] != "5' NCR") and (alternative_exon['Exon Start (Protein)'] != "3' NCR") and (alternative_exon['Exon Start (Protein)'] != "No coding seq") and (alternative_exon['Exon Start (Protein)'] != "Partial start codon") and (alternative_exon['Exon Start (Protein)'] != "Partial start codon") and (alternative_exon['Exon Start (Protein)'] != "Missing Transcript Info")
     if is_coding:
-        #validate skipped exon and potential mxe in the alternative_exon are actually adjacent
-        is_adjacent = verifyExonAdjacency(alternative_exon, canonical_exons, skipped_exon, direction = direction)
+        #validate Skipped exon and potential mxe in the alternative_exon are actually adjacent
+        is_adjacent = verifyExonAdjacency(alternative_exon, canonical_exons, Skipped_exon, direction = direction)
         if is_adjacent:
             #compare exon lengths and make sure they are similar, also make sure frame is the same
-            if compareAAlength(skipped_exon, alternative_exon, max_aa_distance = max_aa_distance):
-                #compare exon sequences and check if potential MXE is homologous with skipped exon
-                if compareSeqs(skipped_exon, alternative_exon, min_similarity = min_similarity):
+            if compareAAlength(Skipped_exon, alternative_exon, max_aa_distance = max_aa_distance):
+                #compare exon sequences and check if potential MXE is homologous with Skipped exon
+                if compareSeqs(Skipped_exon, alternative_exon, min_similarity = min_similarity):
                     return True
                 else:
                     return False
@@ -728,7 +731,7 @@ def identifySpliceEvents(exons, proteins, functional = True):
                                         event = 'unclear'
                                     break
                                 elif gene_cend < gene_astart:
-                                    event = 'skipped'
+                                    event = 'Skipped'
                                     impacted_region = (gene_cstart, gene_cend)
                                     atype = 'unclear'
                                     transcript_region = (canonical_exons.loc[i, 'Exon Start (Transcript)'], canonical_exons.loc[i, 'Exon End (Transcript)'])
@@ -744,7 +747,7 @@ def identifySpliceEvents(exons, proteins, functional = True):
                                     break
 
                                 if event is None:
-                                    event = 'skipped'
+                                    event = 'Skipped'
                                     impacted_region = (gene_cstart, gene_cend)
                                     atype = 'unclear'
                                     transcript_region = (canonical_exons.loc[i, 'Exon Start (Transcript)'], canonical_exons.loc[i, 'Exon End (Transcript)'])

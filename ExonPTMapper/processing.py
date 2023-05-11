@@ -166,7 +166,7 @@ def getIsoformInfo(transcripts):
     Get dataframe where each row corresponds to a unique protein isoform, with transcripts with identitical protein information being in the same row
     """
     #add amino acid sequence to translator information
-    isoforms = mapper.transcripts[['Gene stable ID', 'Amino Acid Sequence']].reset_index()
+    isoforms = mapper.transcripts[['Gene stable ID', 'Amino Acid Sequence']]
     #group transcripts by gene and protein sequences
     isoforms = isoforms.reset_index().groupby(['Amino Acid Sequence', 'Gene stable ID'])['Transcript stable ID'].agg(';'.join).reset_index()
     
@@ -303,7 +303,7 @@ def getMatchedTranscripts(transcripts, update = False):
         print('Finding available transcripts')
         start = time.time()
         #get transcripts whose amino acid sequences are identifical in proteomeScoute and GenCode
-        seq_align = config.translator[config.translator['Uniprot Canonical'] == 'Canonical'].copy()
+        seq_align = config.translator[config.translator['Uniprot Canonical'] == 'Canonical'['Transcript stable ID', 'UniProtKB/Swiss-Prot ID']].drop_duplicates().copy()
         #record the total number of transcripts
         num_transcripts = seq_align.shape[0]
         
