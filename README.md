@@ -48,95 +48,19 @@ From ensembl, we need exon sequences, exon ranks, coding sequences, and the ense
 5. Navigate to attributes
 	1. For exon information, click sequences -> Exon sequences. Under header information, check 'Exon stable ID' and "Exon rank". Call this file 'exon_sequences.fasta.gz'.
 	2. For coding sequences, click sequences -> Coding sequences. Call this file 'coding_sequences.fasta.gz'
-	3. For meta information, click attributes and select: . Call this info 'meta_info.csv.gz'
-	4. For translator file, click features and select: . Call this file ______
 6. Click 'Results' (upper left corner)
 7. Download compressed file and save in processed_data_dir
 
-## Processing Ensembl Info
+## Mapping and Projecting PTMs onto Alternative Transcripts
 
-To process exons file, first import packages and load data
+Loading in data and running the entire mapping pipeline only requires the use of one master function:
 ```
-#load sequence data
-exon_sequences = config.processEnsemblFasta(config.source_data_dir+'exon_sequences.fasta.gz', id_col = 'Exon stable ID', seq_col = 'Exon Sequence')
-coding_sequences = config.processEnsemblFasta(config.source_data_dir+'coding_sequences.fasta.gz', id_col = 'Transcript stable ID', seq_col = 'Coding Sequence')
+from ExonPTMapper import mapping
 
-#load and process meta data
-meta = pd.read_csv(config.source_data_dir + '/meta_info.csv.gz', compression = 'gzip')
-genes = meta[['Gene name','Transcript stable ID', 'Gene start (bp)','Gene end (bp)', 'Chromosome/scaffold name']]
-genes.index = meta['Gene stable ID']
-#get rid of excess due to exon ids
-genes = genes.drop_duplicates()
-#collapse each gene into a single a row
-genes['Protein coding transcripts'] = genes['Transcript stable ID'].groupby('Gene stable ID').apply(','.join)
-genes = genes.drop('Transcript stable ID', axis = 1)
-genes = genes.drop_duplicates()
-#make transcript dataframe
-transcripts = meta[['Gene stable ID', 'Transcript start (bp)','Transcript end (bp)', 'Transcription start site (TSS)','Transcript length (including UTRs and CDS)', 'CDS Length']]
-transcripts.index = meta['Transcript stable ID']
-transcripts = transcripts.drop_duplicates()
+mapper = mapping.run_mapping()
+```
+This will load any data found within the processed_data_dir indicated in the config file. Based on the available information, it will start the mapping/projection procedure at a point is not redundant (i.e. it will not calculate/obtain any information that already exists). If you wish to start the process from scratch, you may set restart = True.
 
-#extract exon info
-exons = meta[['Gene stable ID', 'Transcript stable ID', 'Exon stable ID', 'Constitutive exon', 'Exon region start (bp)', 'Exon region end (bp)', 'Exon rank in transcript', 'Genomic coding start', 'Genomic coding end']]
-exons = exons.rename({'Exon region start (bp)':'Exon Start (Gene)', 'Exon region end (bp)':'Exon End (Gene)'}, axis = 1)
-
-TRIFID = pd.read_csv(config.source_data_dir + 'TRIFID.txt',sep = '\t')
-```
-
-Then, simply run the various processing functions
-```
-exons = processing.processExons(exons, exon_sequences)
-transcripts = processing.processTranscripts(transcripts, coding_sequences, exons, TRIFID = TRIFID)
-proteins = processing.getProteinInfo()
-```
-Get all transcript-specific exon sequences
-```
-aa_seq_ragged, aa_seq_nr, exon_prot_starts, exon_prot_ends = processing.getAllExonSequences(exons, transcripts)
-exons['Exon Start (Protein)'] = exon_prot_starts
-exons['Exon End (Protein)'] = exon_prot_ends
-exons['Exon AA Seq (Ragged)'] = aa_seq_ragged
-exons['Exon AA Seq (Full Codon)'] = aa_seq_nr
-```
+The pipeline will also automatically save new data files in the processed_data_dir.
 
 
-Save each data file
-```
-exons.to_csv(config.processed_data_dir + 'exons.csv')
-transcripts.to_csv(config.processed_data_dir + 'transcripts.csv')
-genes.to_csv(config.processed_data_dir + 'genes.csv')
-proteins.to_csv(config.processed_data_dir + 'proteins.csv')
-```
-
-## Map PTMs to Exons
-
-The next step is to integrate PTM level information from proteomeScout and the data files processed from the previous step. In order to do this, we first need to check which transcripts from Ensembl match the information found in ProteomeScout (do the amino acid sequences match?). These will be the transcripts that we predominantly work with:
-```
-processing.getMatchedTranscripts(transcripts, update = True)
-``` 
-The above will automatically save the list of available transcripts in the processed data directory.
-
-Next, load data:
-```
-from ExonPTMapper.newdata_processing import mapping, config
-
-mapper = mapping.load_PTMmapper()
-```
-
-Next, find PTMs related to available transcripts, then map the PTM to exons/genes:
-```
-mapper.findAllPTMs()
-mapper.mapPTMs_all()
-```
-
-Also run additional functions to further annotate PTMs
-```
-mapper.getAllTrypticFragments()
-mapper.getAllFlankingSeqs()
-mapper.findAllinDomains()
-mapper.boundary_analysis()
-```
-
-Save ptm_info
-```
-mapper.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
-```
