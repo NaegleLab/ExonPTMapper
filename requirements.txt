@@ -1,6 +1,9 @@
 pandas
 numpy
+seaborn
 matplotlib==3.6.0
 biopython==1.79
+cogent3==2021.10.12al
 pybiomart==0.2.0
+pyliftover==0.4
 tqdm==4.64.1
