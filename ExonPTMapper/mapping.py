@@ -943,8 +943,8 @@ class PTM_mapper:
                 alt_ptms = self.isoform_ptms.copy()
                 
             #get alternative isoforms for which the PTM is conserved (i.e. the PTM is present in the isoform and has residue data) or lost (i.e. the PTM is not present in the isoform)    
-            conserved_transcripts = alt_ptms.dropna(subset = 'Alternative Residue').groupby('Source of PTM')['Isoform ID'].apply(list)
-            lost_transcripts = alt_ptms[alt_ptms['Alternative Residue'].isna()].groupby('Source of PTM')['Isoform ID'].apply(list)
+            conserved_transcripts = alt_ptms.dropna(subset = 'Alternative Protein Position (AA)').groupby('Source of PTM')['Isoform ID'].apply(list)
+            lost_transcripts = alt_ptms[alt_ptms['Alternative Protein Position (AA)'].isna()].groupby('Source of PTM')['Isoform ID'].apply(list)
                 
         else:
             #ensure that alternative_ptms has been calculated. If not, raise error
