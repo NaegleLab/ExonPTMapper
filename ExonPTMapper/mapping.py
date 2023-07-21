@@ -12,11 +12,12 @@ import time
 import multiprocessing
 from tqdm import tqdm
 import pyliftover
+import pickle
 from ExonPTMapper import config, processing, utility, alternative_mapping, get_splice_events
 
 
 class PTM_mapper:
-    def __init__(self):
+    def __init__(self, from_pickle = False):
         """
         Class for identifying relevant information about PTMs, and maps them to corresponding exons, transcripts, and genes
         
@@ -33,8 +34,8 @@ class PTM_mapper:
         Returns
         -------
         mapper class
-        """
-        self.load_PTMmapper()
+        """ 
+        self.load_PTMmapper(from_pickle = from_pickle)
 
         
     
@@ -999,7 +1000,8 @@ class PTM_mapper:
             else:
                 num_isoforms = alt_ptms['Alternative Transcript'].nunique()
             return self.ptm_info[self.ptm_info[save_col] == 1].shape[0]/self.ptm_info.shape[0], num_isoforms
-        
+    
+
     def addSpliceEventsToAlternative(self, splice_events_df):
         """
         Adds splice event information obtained from get_splice_events.py to alternative_ptms dataframe
@@ -1171,76 +1173,136 @@ class PTM_mapper:
 
 
         self.isoform_ptms = isoform_ptms
+
+    def save_mapper(self, to_tsv = True, to_pickle = False):
+        """
+        Save mapper object to .tsv files and/or pickle file. By default, only saves to .tsv files, due to potential security concerns of pickles
+
+        Parameters
+        ----------
+        to_tsv: bool, optional
+            Whether to save mapper attributes to .tsv files. The default is True.
+        to_pickle: bool, optional
+            Whether to save mapper object as a pickle file. The default is False.
+
+        Returns
+        -------
+        None
+        """
+        if to_pickle:
+            print('saving pickled mapper object')
+            self.translator = config.translator.copy()
+            with open(config.processed_data_dir + 'mapper.p', 'wb') as f:
+                pickle.dump(self.__dict__, f)
         
-    def load_PTMmapper(self):
+        if to_tsv:
+            print('Saving mapper attributes to .tsv files')
+            if self.genes is not None:
+                self.genes.to_csv(config.processed_data_dir + 'genes.csv')
+            
+            if self.transcripts is not None:
+                self.transcripts.to_csv(config.processed_data_dir + 'transcripts.csv')
+            
+            if self.exons is not None:
+                self.exons.to_csv(config.processed_data_dir + 'exons.csv', index = False)
+
+            if self.ptm_info is not None:
+                self.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
+            
+            if self.ptm_coordinates is not None:
+                self.ptm_coordinates.to_csv(config.processed_data_dir + 'ptm_coordinates.csv')
+
+            if self.isoforms is not None:
+                self.isoforms.to_csv(config.processed_data_dir + 'isoforms.csv')
+
+            if self.alternative_ptms is not None:
+                self.alternative_ptms.to_csv(config.processed_data_dir + 'alternative_ptms.csv')
+
+
+            
+            
+
+        
+    def load_PTMmapper(self, from_pickle = False):
         """
         Load all data files from processed data directory listed in the config file, and save as attributes of the PTM_mapper object. __init__ function calls this function
 
         Parameters
         ----------
-        None
+        from_pickle : bool, optional
+            Whether to load the mapper object via pickle, if it exists. The default is False, and will manually load the mapper object through each .tsv file in processed data directory.
 
         Returns
         -------
         new attributes of the PTM_mapper object, depending on what files were found (exons, transcripts, genes, ptm_info, ptm_coordinates, alternative_ptms, isoforms)
         """
         #check if each data file exists: if it does, load into mapper object
-        if os.path.exists(config.processed_data_dir + 'exons.csv'):
-            print('Loading exon-specific data')
-            self.exons = pd.read_csv(config.processed_data_dir + 'exons.csv')
+        if from_pickle and os.path.isfile(config.processed_data_dir + 'mapper.p'):
+            print('Loading pickled mapper object')
+            with open(config.processed_data_dir + 'mapper.p', 'rb') as f:
+                self.__dict__ = pickle.load(f)
         else:
-            self.exons = None
-            
-        if os.path.exists(config.processed_data_dir + 'transcripts.csv'):
-            print('Loading transcript-specific data')
-            self.transcripts = pd.read_csv(config.processed_data_dir + 'transcripts.csv', index_col = 0)
-        else:
-            self.transcripts = None
+            if from_pickle:
+                print('No pickled mapper object found, loading directly from tsv files')
+            else:
+                print('Loading mapper object from .tsv files')
         
-        if os.path.exists(config.processed_data_dir + 'genes.csv'):
-            print('Loading gene-specific info')
-            self.genes = pd.read_csv(config.processed_data_dir + 'genes.csv', index_col = 0)
-        else:
-            self.genes = None
+            if os.path.exists(config.processed_data_dir + 'exons.csv'):
+                print('Loading exon-specific data')
+                self.exons = pd.read_csv(config.processed_data_dir + 'exons.csv')
+            else:
+                self.exons = None
+                
+            if os.path.exists(config.processed_data_dir + 'transcripts.csv'):
+                print('Loading transcript-specific data')
+                self.transcripts = pd.read_csv(config.processed_data_dir + 'transcripts.csv', index_col = 0)
+            else:
+                self.transcripts = None
             
-        if os.path.exists(config.processed_data_dir + 'isoforms.csv'):
-            print('Loading unique protein isoforms')
-            self.isoforms = pd.read_csv(config.processed_data_dir + 'isoforms.csv')
-        else:
-            self.isoforms = None
-            
-        if os.path.exists(config.processed_data_dir + 'proteins.csv'):
-            print('Loading protein-specific info')
-            self.proteins = pd.read_csv(config.processed_data_dir + 'proteins.csv', index_col = 0)
-        else:
-            self.proteins = None
-            
-        if os.path.exists(config.processed_data_dir + 'ptm_info.csv'):
-            print('Loading information on PTMs on canonical proteins')
-            self.ptm_info = pd.read_csv(config.processed_data_dir + 'ptm_info.csv',index_col = 0)
-            
-            #check to see if ptm_info is collapsed or not (if each row is a unique ptm)
-            if len(np.unique(self.ptm_info.index)) != self.ptm_info.shape[0]:
-                self.ptm_info = self.ptm_info.reset_index()
-                self.ptm_info = self.ptm_info.rename({'index':'PTM'}, axis = 1)
-        else:
-            self.ptm_info = None
-            
-        if os.path.exists(config.processed_data_dir + 'ptm_coordinates.csv'):
-            print('Loading information on PTMs on canonical proteins')
-            self.ptm_coordinates = pd.read_csv(config.processed_data_dir + 'ptm_coordinates.csv',index_col = 0,
-                                                dtype = {'Source of PTM': str, 'Chromosome/scaffold name': str, 'Gene Location':int,
-                                                'Ragged': str})
-        else:
-            self.ptm_coordinates = None
-            
-        if os.path.exists(config.processed_data_dir + 'alternative_ptms.csv'):
-            print('Loading information on PTMs on alternative proteins')
-            self.alternative_ptms = pd.read_csv(config.processed_data_dir + 'alternative_ptms.csv', dtype = {'Exon ID (Alternative)':str, 'Chromosome/scaffold name': str, 'Ragged':str, 'Genomic Coordinates':str, 'Second Exon': str, 'Alternative Residue': str, 'Protein':str})
-        else:
-            self.alternative_ptms = None
-            
-        self.isoform_ptms = None
+            if os.path.exists(config.processed_data_dir + 'genes.csv'):
+                print('Loading gene-specific info')
+                self.genes = pd.read_csv(config.processed_data_dir + 'genes.csv', index_col = 0)
+            else:
+                self.genes = None
+                
+            if os.path.exists(config.processed_data_dir + 'isoforms.csv'):
+                print('Loading unique protein isoforms')
+                self.isoforms = pd.read_csv(config.processed_data_dir + 'isoforms.csv')
+            else:
+                self.isoforms = None
+                
+            if os.path.exists(config.processed_data_dir + 'proteins.csv'):
+                print('Loading protein-specific info')
+                self.proteins = pd.read_csv(config.processed_data_dir + 'proteins.csv', index_col = 0)
+            else:
+                self.proteins = None
+                
+            if os.path.exists(config.processed_data_dir + 'ptm_info.csv'):
+                print('Loading information on PTMs on canonical proteins')
+                self.ptm_info = pd.read_csv(config.processed_data_dir + 'ptm_info.csv',index_col = 0)
+                
+                #check to see if ptm_info is collapsed or not (if each row is a unique ptm)
+                if len(np.unique(self.ptm_info.index)) != self.ptm_info.shape[0]:
+                    self.ptm_info = self.ptm_info.reset_index()
+                    self.ptm_info = self.ptm_info.rename({'index':'PTM'}, axis = 1)
+            else:
+                self.ptm_info = None
+                
+            if os.path.exists(config.processed_data_dir + 'ptm_coordinates.csv'):
+                print('Loading information on PTMs on canonical proteins')
+                self.ptm_coordinates = pd.read_csv(config.processed_data_dir + 'ptm_coordinates.csv',index_col = 0,
+                                                    dtype = {'Source of PTM': str, 'Chromosome/scaffold name': str, 'Gene Location':int,
+                                                    'Ragged': str})
+            else:
+                self.ptm_coordinates = None
+                
+            if os.path.exists(config.processed_data_dir + 'alternative_ptms.csv'):
+                print('Loading information on PTMs on alternative proteins')
+                self.alternative_ptms = pd.read_csv(config.processed_data_dir + 'alternative_ptms.csv', dtype = {'Exon ID (Alternative)':str, 'Chromosome/scaffold name': str, 'Ragged':str, 'Genomic Coordinates':str, 'Second Exon': str, 'Alternative Residue': str, 'Protein':str})
+            else:
+                self.alternative_ptms = None
+                
+            self.isoform_ptms = None
 
 
     
