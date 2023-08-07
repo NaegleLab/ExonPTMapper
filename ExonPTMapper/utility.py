@@ -3,6 +3,41 @@ import gzip
 import numpy as np
 from Bio import SeqIO
 
+def getIsoformInfo(transcripts):
+    """
+    Get dataframe where each row corresponds to a unique protein isoform, with transcripts with identitical protein information being in the same row
+    """
+    #add amino acid sequence to translator information
+    merged = config.translator.merge(transcripts['Amino Acid Sequence'], left_on = 'Transcript stable ID', right_index = True)
+    
+    #group information by gene stable ID and amino acid sequence (each unique protein isoform associated with the gene)
+    transcripts =  merged.groupby(['Gene stable ID','Gene name', 'Amino Acid Sequence'])['Transcript stable ID'].apply(set).apply(','.join)
+    proteins = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['UniProtKB/Swiss-Prot ID'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
+    isoform_id = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['UniProtKB isoform ID'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
+    canonical = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['Uniprot Canonical'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
+    
+    #combine into dataframe
+    isoforms = pd.concat([proteins, isoform_id, canonical, transcripts], axis = 1).reset_index()
+    isoforms['Uniprot Canonical'] = isoforms['Uniprot Canonical'].replace('', 'Ensembl Alternative')
+    return isoforms
+
+
+def is_canonical(row):
+    """
+    Based on the uniprot ID in translator row, label each protein as canonical or isoform
+    """
+    if row['UniProtKB/Swiss-Prot ID'] is np.nan:
+        ans = np.nan
+    elif row['UniProtKB isoform ID'] is np.nan:
+        ans = 'Canonical'
+    elif row['UniProtKB isoform ID'].split('-')[1] == 1:
+        ans = 'Canonical'
+    else:
+        ans = 'Alternative'
+        
+    return ans   
+
+
 def stringToBoolean(string):
     if type(string) == bool:
         return string
