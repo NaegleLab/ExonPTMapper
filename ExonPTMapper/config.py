@@ -6,17 +6,29 @@ import sys
 import os
 import pybiomart
 import warnings
+import logging
+import datetime
 from Bio import SeqIO
 from ExonPTMapper import utility
 #import swifter
 
 #where package will look for data files, update these lines as needed
-api_dir = './'
-ps_data_dir = './ProteomeScoutAPI/proteomescout_mammalia_20220131/data.tsv'
-source_data_dir = './ensembl_data/'
-processed_data_dir = './processed_data_dir/'
+
+api_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research'
+ps_data_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research\ProteomeScoutAPI\proteomescout_mammalia_20220131\data.tsv'
+source_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_August112023/ensembl_data/'
+processed_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_August112023/processed_data_dir/'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
+#initialize logger
+logger = logging.getLogger('Configuration')
+logger.setLevel(logging.DEBUG)
+handler = logging.FileHandler(processed_data_dir + 'ExonPTMapper.log')
+log_format = logging.Formatter('%(asctime)s\t%(name)s\t%(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+handler.setFormatter(log_format)
+#     if (logger.hasHandlers()):
+#         logger.handlers.clear()
+logger.addHandler(handler)
 
 #load ProteomeScoutAPI
 sys.path.append(api_dir)
@@ -38,6 +50,7 @@ print('Downloading ID translator file')
 if os.path.isfile(processed_data_dir + 'translator.csv'):
     translator = pd.read_csv(processed_data_dir + 'translator.csv')
 else:
+    logger.info('Translator file not found. Downloading from Database IDs of Ensembl, UniProt, PDB, CCDS, and Refseq via pybiomart.')
     #restrict to primary chromosomes (avoid haplotypes)
     chromosomes = ['X', '20', '1', '6', '3', '7', '12', '11', '4', '17', '2', '16',
        '8', '19', '9', '13', '14', '5', '22', '10', 'Y', '18', '15', '21',
@@ -52,11 +65,12 @@ else:
                                        'uniprotswissprot', 'uniprot_isoform'],
              filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding',
              'chromosome_name':chromosomes})
+    #identify whether transcript is associated with canonical uniprot id
+    translator['Uniprot Canonical'] = translator.apply(utility.is_canonical, axis =1)
+
     #identify potential gene name errors and report if any (same gene name and transcript ID are associated with multiple protein IDs)
-    test_for_errors = translator[translator.duplicated(['Gene name', 'Gene stable ID', 'Transcript stable ID'], keep = False)]
-    if test_for_errors.shape[0] > 0:
-        error_genes = ', '.join(list(test_for_errors['Gene name'].unique()))
-        warnings.warn(f"There are potential conflicting UniProt IDs in the translator file for the following genes: {error_genes}. Recommend resolving these conflicts manually before continuing")
+    translator['Warnings'] = np.nan
+    utility.checkForTranslatorErrors(translator, logger=logger)
 
     #load additional ID data that relates Ensembl to external databases (PDB, RefSeq, CCSD)
     translator2 = dataset.query(attributes=['ensembl_gene_id','external_gene_name', 'ensembl_transcript_id', 'pdb','refseq_mrna', 'ccds'],
@@ -64,10 +78,10 @@ else:
              'chromosome_name':chromosomes})
     
     #merge two dataframes, drop any duplicates caused by merging
-    translator = translator.merge(translator2, on = ['Gene stable ID', 'Gene name', 'Transcript stable ID'], how = 'outer')
+    translator = translator.merge(translator2, on = ['Gene stable ID', 'Gene name', 'Transcript stable ID'], how = 'left')
     translator = translator.drop_duplicates()
-    #indicate whether row contains information on uniprot canonical transcript
-    translator['Uniprot Canonical'] = translator.apply(utility.is_canonical, axis =1)
+
+    logger.info('Finished downloading and processing translator file. Saving to processed data directory.')
     
     #save to processed data directory
     translator.to_csv(processed_data_dir + 'translator.csv')

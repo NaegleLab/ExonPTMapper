@@ -1,7 +1,40 @@
 import pandas as pd
 import gzip
 import numpy as np
+import warnings
+import logging
 from Bio import SeqIO
+from ExonPTMapper import config
+
+
+def checkForTranslatorErrors(translator, logger = None):
+    """
+    Check for potential errors in the translator file (same gene name and transcript ID are associated with multiple protein IDs)
+    """
+    #grab entries with duplicate gene ID and transcript ID: potential errors with UniProtID
+    test_for_errors = translator[translator.duplicated(['Gene name', 'Gene stable ID', 'Transcript stable ID'], keep = False)]
+    
+    # see if any errors exist, if so, report
+    if test_for_errors.shape[0] > 0:
+        error_genes = ', '.join(list(test_for_errors['Gene name'].unique()))
+        warnings.warn(f"There are {test_for_errors['Gene name'].nunique()} potential conflicting UniProt IDs in the translator file. Recommend resolving these conflicts manually before continuing, or remove from analysis. See log file for more details.")
+        if logger is not None:
+            logger.warning(f"There are {test_for_errors['Gene name'].nunique()} potential conflicting UniProt IDs in the translator file for the following genes: {error_genes}. Recommend resolving these conflicts manually before continuing.")
+
+    translator.loc[translator.duplicated(['Gene name', 'Gene stable ID', 'Transcript stable ID'], keep = False), 'Warnings'] = "Conflicting UniProt IDs"
+
+    #test for cases where the dominant UniProt ID is not clear (multiple canonical-seeming entries for a single gene with different UniProt IDs). Exclude genes with potential errors
+    test_for_ambiguity = translator[(translator['Uniprot Canonical'] == 'Canonical') & (~translator['Gene name'].isin(list(test_for_errors['Gene name'].unique())))]
+    test_for_ambiguity = test_for_ambiguity.groupby('Gene name')['UniProtKB/Swiss-Prot ID'].apply(set).apply(len)
+    if test_for_ambiguity.shape[0] > 1:
+        ambiguous_genes = ', '.join(list(np.unique(test_for_ambiguity[test_for_ambiguity > 1].index)))
+        num_ambigous_genes = len(np.unique(test_for_ambiguity[test_for_ambiguity > 1].index))
+        warnings.warn(f"There are {num_ambigous_genes} genes that correspond to multiple UniProt entries. Recommend denoting which UniProt ID should be considered canonical, these genes will be mapped, but will not be considered when assessing splice events")
+        if logger is not None:
+            logger.warning(f"There are {num_ambigous_genes} genes that correspond to multiple UniProt entries: {ambiguous_genes}. Recommend denoting which UniProt ID should be considered canonical, these genes will be mapped, but will not be considered when assessing splice events")
+
+    #add warning to translator dataframe for genes with multiple possible canonical proteins
+    translator.loc[translator['Gene name'].isin(test_for_ambiguity[test_for_ambiguity > 1].index), 'Warnings'] = "Multiple Possible Canonical Proteins for Gene"
 
 def getIsoformInfo(transcripts):
     """
@@ -30,7 +63,7 @@ def is_canonical(row):
         ans = np.nan
     elif row['UniProtKB isoform ID'] is np.nan:
         ans = 'Canonical'
-    elif row['UniProtKB isoform ID'].split('-')[1] == 1:
+    elif row['UniProtKB isoform ID'].split('-')[1] == '1':
         ans = 'Canonical'
     else:
         ans = 'Alternative'
