@@ -58,7 +58,6 @@ def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_
     print('Downloading and processing gene-specific meta information')
     genes = dataset.query(attributes=gene_attributes,filters = filters)
     #identify all genes with uniprot id and collapse into one row for each gene
-    #genes = genes.dropna(subset = 'UniProtKB/Swiss-Prot ID')
     genes = collapseGenesByProtein(genes)
 
     #save data
@@ -114,8 +113,21 @@ def processExons(exon_info, exon_sequences):
     exons: pandas.DataFrame
         Updated exon dataframe which contains exon sequences, lengths, and location in transcript sequence.
     """
+    logger.info('Adding sequence information to exon dataframe')
+
+    #check to see what exons did not have sequence information in sequence data
+    missing_seq_exons = set(exons['Exon stable ID']).difference(set(exon_sequences['Exon stable ID']))
+    if len(missing_seq_exons) > 0:
+        logger.warning(f'{len(missing_seq_exons)} exons did not have sequence information in sequence data. Transcripts containing these exons will be removed from analysis. The following exons do not have sequence information: {", ".join(missing_seq_exons)}.')
+
+
     #load exon specific information and compile into one data structure
     exons = pd.merge(exon_info, exon_sequences, on ='Exon stable ID', how = 'left')
+
+    #check to make sure exon dataframe is the same size as before
+    if exon_info.shape[0] != exons.shape[0]:
+        logger.warning('Merging exon information and exon sequence information resulted in duplicate rows. Removing duplicates, but proceed with caution')
+        exons = exons.drop_duplicates()
     
     #remove transcripts with incomplete exon sequence information
     missing_info_transcripts = exons.loc[exons['Exon Sequence'].isna()]
@@ -125,11 +137,14 @@ def processExons(exon_info, exon_sequences):
         if row['Exon rank in transcript'] != 1 and row['Exon rank in transcript'] != exons.loc[exons['Transcript stable ID'] == row['Transcript stable ID'], 'Exon rank in transcript'].max():
             remove_transcripts.append(row['Transcript stable ID'])
     remove_transcripts = np.unique(remove_transcripts)
-    print(f'{len(remove_transcripts)} with incomplete exon sequence information. Removing from analysis.')
+    if len(remove_transcripts) > 0:
+        print(f'{len(remove_transcripts)} with incomplete exon sequence information. Removing from analysis.')
+        logger.warning(f'{len(remove_transcripts)} transcripts with incomplete exon sequence information. Removing from analysis.')
     exons = exons[~exons['Transcript stable ID'].isin(remove_transcripts)]
     exons = exons.dropna(subset = 'Exon Sequence')
 
     print('Getting exon lengths and cuts')
+    logger.info('Getting exon lengths and locations in transcript sequence')
     start = time.time()
     #get exon lengths from sequence information
     exons["Exon Length"] = exons.apply(exonlength, axis = 1)
@@ -168,6 +183,7 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
     """
 
     print('Getting transcript sequences from exon data')
+    logger.info('Getting complete transcript sequences from exon data')
     start = time.time()
     #sort exons in correct order (by rank in transcript)
     sorted_exons = exons.sort_values(by = ['Transcript stable ID','Exon rank in transcript']).copy()
@@ -182,24 +198,40 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
     end = time.time()
     print('Elapsed time:',end - start,'\n')
 
+    #store starting shape of transcript dataframe to check for potential errors later
+    initial_transcript_shape = transcripts.shape[0]
+
     print('Finding coding sequence location in transcript')
-    #find coding sequence location in transcript
+    logger.info('Finding location of coding sequence in transcript')
     start = time.time()
     #add coding sequences to transcript info
     transcripts = transcripts.join([coding_seqs])
-    #find start and end position of coding sequence in transcript sequence
-    cds_start, cds_stop = findCodingRegion(transcripts)
+    #find start and end position of coding sequence in transcript sequence, and report any errors
+    cds_start, cds_stop, warnings = findCodingRegion(transcripts)
     transcripts['Relative CDS Start (bp)'] = cds_start
     transcripts['Relative CDS Stop (bp)'] = cds_stop
+    transcripts['Warnings'] = warnings
     end = time.time()
     print('Elapsed time:',end - start,'\n')
+
+    #record how many transcripts have missing coding sequence information
+    missing_cds_loc = transcripts['Warnings'].count()
+    print(f'There were {missing_cds_loc} transcripts whose coding sequence location could not be identified ({round(missing_cds_loc/transcripts.shape[0]*100, 2)}%)')
+    logger.info(f'There were {missing_cds_loc} transcripts whose coding sequence location could not be identified ({round(missing_cds_loc/transcripts.shape[0]*100, 2)}%)')
     
     #add appris functional scores if information is provided
     if APPRIS is not None:
         print('Adding APPRIS functional scores')
+        logger.info('Adding data downloaded from APPRIS database, including TRIFID functional scores')
         start = time.time()
+        #extract relevant columns and rename to more readable column names
         APPRIS = APPRIS[['transcript_id','ccdsid','norm_trifid_score']]
         APPRIS = APPRIS.rename({'transcript_id':'Transcript stable ID', 'ccdsid':'CCDS ID', 'norm_trifid_score':'TRIFID Score'}, axis = 1)
+        #check to make sure there are not duplicate transcript entries
+        if APPRIS['Transcript stable ID'].nunique() != APPRIS.shape[0]:
+            logger.warning('APPRIS data contains rows with duplicate transcripts. Removing duplicates, but proceed with caution')
+            APPRIS = APPRIS.drop_duplicates(subset = 'Transcript stable ID')
+        #add appris data to transcripts dataframe
         transcripts = transcripts.merge(APPRIS, on = 'Transcript stable ID', how = 'left')
         end = time.time()
         print('Elapsed time:', end-start,'\n')
@@ -212,17 +244,22 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
     
     #return the fraction of transcripts that were successfully translated: some may not due to missing coding sequences, coding sequences that are not multiples of 3, or other issues that arose during translation
     fraction_translated = transcripts.dropna(subset = 'Amino Acid Sequence').shape[0]/transcripts.shape[0]
-    print(f'Fraction of transcripts that were successfully translated: {round(fraction_translated, 2)}')
+    logger.info(f'Fraction of transcripts that were successfully translated: {round(fraction_translated, 3)}')
+    print(f'Fraction of transcripts that were successfully translated: {round(fraction_translated, 3)}')
     print('Elapsed time:',end -start,'\n')
 
     
-    #indicate whether transcript is canonical
+    #indicate whether transcript is canonical based on translator dataframe
     trim_translator = config.translator[['Transcript stable ID', 'Uniprot Canonical']].drop_duplicates()
     transcripts = transcripts.merge(trim_translator, on = 'Transcript stable ID', how = 'left')
     
     #add transcript id as index again
     transcripts.index = transcripts['Transcript stable ID']
     transcripts = transcripts.drop('Transcript stable ID', axis = 1)
+
+    #make sure transcript 
+    if initial_transcript_shape != transcripts.shape[0]:
+        logger.warning(f'Size of transcripts dataframe changed during processing. Initial size was {initial_transcript_shape}, final size is {transcripts.shape[0]}. Removing any duplicate rows, but proceed with caution')
     
     return transcripts
 
@@ -340,28 +377,58 @@ def collapseGenesByProtein(genes):
     genes = genes.drop_duplicates()
     return genes
 
-def findCodingRegion(transcripts):
-    five_cut = []
-    three_cut = []
+def findCodingRegion(transcripts, transcript_sequence_col = 'Transcript Sequence', coding_sequence_col = 'Coding Sequence'):
+    """
+    Given the transcripts dataframe containing both the full coding sequence and the transcript sequence, find the start and end position of the coding sequence in the transcript sequence. If the coding sequence is not found in the transcript sequence, return np.nan for both start and end position, and specify the reason in the warnings list
+
+    Parameters
+    ----------
+    transcripts: pandas.DataFrame
+        Transcript dataframe obtained from downloadMetaInformation() with both transcript and coding sequence information added
+    transcript_sequence_col: str
+        Name of column in transcripts dataframe that contains the transcript sequence. Default is 'Transcript Sequence'
+    coding_sequence_col: str
+        Name of column in transcripts dataframe that contains the coding sequence. Default is 'Coding Sequence'
+    
+    Returns
+    ----------
+    cds_start: list
+        List of start positions of the coding sequence in the transcript sequence, in the same order as the inputted transcripts dataframe. Based on pythonic coordinates (i.e 0 is the first base pair in the transcript). If the coding sequence is not found in the transcript sequence, return np.nan.
+    cds_end: list
+        List of end positions of the coding sequence in the transcript sequence, in the same order as the inputted transcripts dataframe. Based on pythonic coordinates (i.e 0 is the first base pair in the transcript and end coordinate is exclusive). If the coding sequence is not found in the transcript sequence, return np.nan.
+    warnings: list
+        Any errors/warnings that arose during the process of finding coding sequence location in transcript sequence. Value will be np.nan for transcripts where the coding sequence was found in the transcript sequence.
+    """
+    #initialize lists to add as new columns to transcript dataframe
+    cds_start = []
+    cds_end = []
+    warnings = []
+    #iterate through each transcript, find the start and end position of coding sequence using re.search()
     for i in transcripts.index:
-        coding_sequence = transcripts.at[i,'Coding Sequence']
-        full_transcript = transcripts.at[i,'Transcript Sequence']
+        #grab transcript and coding sequence
+        coding_sequence = transcripts.at[i,coding_sequence_col]
+        full_transcript = transcripts.at[i,transcript_sequence_col]
+        #check to make sure both coding sequence and transcript sequence are available
         if full_transcript is not np.nan and coding_sequence is not np.nan:
+            #find start and end position of coding sequence in transcript sequence, if not found, return np.nan
             match = re.search(coding_sequence, full_transcript)
             if match:
-                five_cut.append(match.span()[0])
-                three_cut.append(match.span()[1])
+                cds_start.append(match.span()[0])
+                cds_end.append(match.span()[1])
+                warnings.append(np.nan)
             else:
-                five_cut.append('error:no match found')
-                three_cut.append('error:no match found')
+                cds_start.append(np.nan)
+                cds_end.append(np.nan)
+                warnings.append('Coding Sequence Not Found in Transcript')
         elif coding_sequence is not np.nan:
-            five_cut.append('error:no available coding sequence')
-            three_cut.append('error:no available coding sequence')
+            cds_start.append(np.nan)
+            cds_end.append(np.nan)
+            warnings.append('Missing Transcript Sequence Information')
         else:
-            five_cut.append('error:no available transcript sequence')
-            three_cut.append('error:no available transcript sequence')
-        
-    return five_cut, three_cut
+            cds_start.append(np.nan)
+            cds_end.append(np.nan)
+            warnings.append('Missing Coding Sequence Information')
+    return cds_start, cds_end, warnings
 
 def getMatchedTranscripts(transcripts, update = False): 
     if config.available_transcripts is None or update:
@@ -393,147 +460,240 @@ def getMatchedTranscripts(transcripts, update = False):
 
 def getExonCodingInfo(exon, transcripts, strand):
     """
-    Given the processed exon and transcript dataframes 
+    Given the processed exon and transcript information, extract the location of the exon in the protein sequence. This includes checking for ragged sites: residues that are only partially encoded by the exon.
+
+    Parameters
+    ----------
+    exon: pandas.Series
+        row of the processed exon dataframe, or series object containing exon information
+    transcripts: pandas.DataFrame
+        processed transcript dataframe produced by processTranscripts()
+    strand: int
+        DNA strand that exon is located in: 1 indicates forward strand, -1 indicates reverse strand
+
+    Returns
+    -------
+    aa_seq_ragged: str
+        Amino acid sequence encoded for by exon of interest, including ragged site residues. Ragged site residues are separated with '-'.
+    aa_seq_nr: str
+        Amino acid sequence encoded for by exon of interest, excluding ragged site residues.
+    exon_prot_start: float
+        Location of the start of the exon in the protein sequence, using amino acid coordinates (first residue is at position 0). This means that fractional values indicate cases in which the exon partially encodes for a residue
+    exon_prot_end: str
+        Location of the end of the exon in the protein sequence, using amino acid coordinates (first residue is at position 0). This means that fracitonal values indicate cases in which the exon partially encodes for a residue.
+    exon_coding_start: int
+        Location of the start of coding sequence in the exon, based on genomic coordinates. This helps indicate whether exon is fully, partially or noncoding (np.nan if noncoding)
+    exon_coding_end: int
+        Location of the end of the coding sequence in the exon, based on genomic coordinates. This helps indicate whether the exon is fully, partially, or fully noncoding (np.nan if noncoding)
+    warnings: str
+        If unable to get amino acid sequence, reasons will be reported here. These could be: exon is in a noncoding region, missing transcript info, missing coding sequence, missing transcript sequence, failure to translate transcript
+
     """
     #make sure exon has associated transcript, if not return Missing Transcript Info
     try:
         transcript = transcripts.loc[exon['Transcript stable ID']]
     except KeyError:
-        return np.repeat('Missing Transcript Info', 6)
-    full_aa_seq = transcript['Amino Acid Sequence']
-    #If coding sequence or transcript sequence not available for transcript, indicate
-    if isinstance(full_aa_seq, float) or transcript['Relative CDS Start (bp)'] == 'error:no match found':
-        return np.repeat('No coding seq', 6)
-    elif transcript['Relative CDS Start (bp)'] == 'error:no available transcript sequence':
-        return np.repeat('No transcript seq', 6)
-    #check to where exon starts in coding sequence (outside of coding sequence, at protein start, with ragged end, or in middle)
-    #coding_start = int(transcript['Relative CDS Start (bp)'])-int(exon['Exon Start (Transcript'])
-    #coding_end = int(transcript['Relative CDS Stop (bp)']) - int(exon['Exon Start (Transcript)'])
-    if int(exon['Exon End (Transcript)']) <= int(transcript['Relative CDS Start (bp)']):
-        return np.repeat("5' NCR", 6)
-    elif int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']) == 1 or int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']) == 2:
-        #for rare case where exon only partially encodes for the starting amino acid
-        return full_aa_seq[0]+'*', 'Partial start codon', 'Partial start codon', 'Partial start codon', 'Partial start codon','Partial start codon'
-    elif exon['Exon Start (Transcript)'] <= int(transcript['Relative CDS Start (bp)']):
-        exon_prot_start = 0.0
-        if strand == 1:
-            exon_coding_start = (int(transcript['Relative CDS Start (bp)']) - exon['Exon Start (Transcript)']) + exon['Exon Start (Gene)']
-        else:
-            exon_coding_start = exon['Exon End (Gene)'] - (int(transcript['Relative CDS Start (bp)']) - exon['Exon Start (Transcript)'])
-    else:
-        exon_prot_start = (exon['Exon Start (Transcript)'] - int(transcript['Relative CDS Start (bp)']))/3
-        exon_coding_start = exon['Exon Start (Gene)'] if strand == 1 else exon['Exon End (Gene)']
+        return tuple(np.repeat(np.nan, 6)) + ('Missing Transcript Info')
     
-    exon_prot_end = (exon['Exon End (Transcript)'] - int(transcript['Relative CDS Start (bp)']))/3
-    if exon['Exon Start (Transcript)'] > int(transcript['Relative CDS Start (bp)'])+len(transcript['Coding Sequence']):
-        return np.repeat("3' NCR", 6)
-    # in some cases a stop codon is present in the middle of the coding sequence: this is designed to catch those cases (also might be good to identify these cases)
-    elif exon['Exon Start (Transcript)'] > int(transcript['Relative CDS Start (bp)'])+len(transcript['Amino Acid Sequence'])*3:
-        return  np.repeat("3' NCR", 6)
-    elif exon_prot_end > float(len(transcript['Amino Acid Sequence'])):
-        exon_prot_end= float(len(transcript['Amino Acid Sequence']))
-        if strand == 1:
-            exon_coding_end = exon['Exon Start (Gene)'] + (int(transcript['Relative CDS Stop (bp)']) - exon['Exon Start (Transcript)'])
+    #look for warnings in transcript dataframe
+    warnings = transcript['Warnings']
+    if warnings == warnings:
+        return tuple(np.repeat(np.nan, 6)) + (warnings)
+    else:
+        full_aa_seq = transcript['Amino Acid Sequence']
+        #check to where exon starts in coding sequence
+        if int(exon['Exon End (Transcript)']) <= int(transcript['Relative CDS Start (bp)']):
+            return tuple(np.repeat(np.nan, 6)) + ("5' NCR")
+        elif int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']) == 1 or int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']) == 2:      #for rare case where exon only partially encodes for the starting amino acid
+            return full_aa_seq[0]+'*', np.nan, np.nan, np.nan, np.nan, np.nan, 'Partial start codon only'
+        elif exon['Exon Start (Transcript)'] <= int(transcript['Relative CDS Start (bp)']): #if exon starts before coding sequence, then exon starts at protein start
+            exon_prot_start = 0.0
+            if strand == 1:     #forward strand, count from start of exon in the gene
+                exon_coding_start = (int(transcript['Relative CDS Start (bp)']) - exon['Exon Start (Transcript)']) + exon['Exon Start (Gene)']
+            else:   #reverse strand, count back from end of exon in the gene
+                exon_coding_start = exon['Exon End (Gene)'] - (int(transcript['Relative CDS Start (bp)']) - exon['Exon Start (Transcript)'])
         else:
-            exon_coding_end = exon['Exon Start (Gene)'] + (exon['Exon End (Transcript)'] - int(transcript['Relative CDS Stop (bp)']))
-    else:
-        exon_prot_end= (int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']))/3 
-        exon_coding_end = exon['Exon End (Gene)'] if strand == 1 else exon['Exon Start (Gene)']
+            exon_prot_start = (exon['Exon Start (Transcript)'] - int(transcript['Relative CDS Start (bp)']))/3
+            exon_coding_start = exon['Exon Start (Gene)'] if strand == 1 else exon['Exon End (Gene)']
+        
+        #check to see where exon ends in the end of coding sequence
+        exon_prot_end = (exon['Exon End (Transcript)'] - int(transcript['Relative CDS Start (bp)']))/3
+        if exon['Exon Start (Transcript)'] > int(transcript['Relative CDS Start (bp)'])+len(transcript['Coding Sequence']):  #if exon starts after the end of the coding sequence
+            return np.repeat("3' NCR", 6)
+        # in some cases a stop codon is present in the middle of the coding sequence: this is designed to catch those cases (also might be good to identify these cases)
+        elif exon['Exon Start (Transcript)'] > int(transcript['Relative CDS Start (bp)'])+len(transcript['Amino Acid Sequence'])*3:   #if exon starts after the end of the coding sequence (based on amino acid sequence)
+            return  np.repeat("3' NCR", 6)
+        elif exon_prot_end > float(len(transcript['Amino Acid Sequence'])): #if exon contains the end of the coding sequence
+            exon_prot_end= float(len(transcript['Amino Acid Sequence']))
+            if strand == 1:
+                exon_coding_end = exon['Exon Start (Gene)'] + (int(transcript['Relative CDS Stop (bp)']) - exon['Exon Start (Transcript)'])
+            else:
+                exon_coding_end = exon['Exon Start (Gene)'] + (exon['Exon End (Transcript)'] - int(transcript['Relative CDS Stop (bp)']))
+        else:
+            exon_prot_end= (int(exon['Exon End (Transcript)']) - int(transcript['Relative CDS Start (bp)']))/3 
+            exon_coding_end = exon['Exon End (Gene)'] if strand == 1 else exon['Exon Start (Gene)']
 
-    
-    if exon_prot_start.is_integer() and exon_prot_end.is_integer():
-        aa_seq_ragged = full_aa_seq[int(exon_prot_start):int(exon_prot_end)]
-        aa_seq_nr = full_aa_seq[int(exon_prot_start):int(exon_prot_end)]
-    elif exon_prot_end.is_integer():
-        ragged_start = math.floor(exon_prot_start)
-        full_start = math.ceil(exon_prot_start)
-        aa_seq_ragged = full_aa_seq[ragged_start]+'-'+full_aa_seq[full_start:int(exon_prot_end)]
-        aa_seq_nr = full_aa_seq[full_start:int(exon_prot_end)]
-    elif exon_prot_start.is_integer():
-        ragged_stop = math.ceil(exon_prot_end)
-        full_stop = math.floor(exon_prot_end)
-        aa_seq_ragged = full_aa_seq[int(exon_prot_start):full_stop]+'-'+full_aa_seq[ragged_stop-1]
-        aa_seq_nr = full_aa_seq[int(exon_prot_start):full_stop]
-    else:
-        ragged_start = math.floor(exon_prot_start)
-        full_start = math.ceil(exon_prot_start)
-        ragged_stop = math.ceil(exon_prot_end)
-        full_stop = math.floor(exon_prot_end)
-        aa_seq_ragged = full_aa_seq[ragged_start]+'-'+full_aa_seq[full_start:full_stop]+'-'+full_aa_seq[ragged_stop-1]
-        aa_seq_nr = full_aa_seq[full_start:full_stop]
+        warnings = np.nan
+        #based on locations of start and end of exon protein sequence, identify cases where the exon encodes for a ragged amino acid (at splice boundary, so exon only partially encodes for amino acid, the rest is coded for by a different exon). If protein start and end are not integers, then the exon encodes for a ragged amino acid. Here, get exon sequences that both include and exclude these ragged sequences
+        if exon_prot_start.is_integer() and exon_prot_end.is_integer(): #no ragged residues
+            aa_seq_ragged = full_aa_seq[int(exon_prot_start):int(exon_prot_end)]
+            aa_seq_nr = full_aa_seq[int(exon_prot_start):int(exon_prot_end)]
+        elif exon_prot_end.is_integer(): #ragged residues at start of exon
+            ragged_start = math.floor(exon_prot_start)
+            full_start = math.ceil(exon_prot_start)
+            aa_seq_ragged = full_aa_seq[ragged_start]+'-'+full_aa_seq[full_start:int(exon_prot_end)]
+            aa_seq_nr = full_aa_seq[full_start:int(exon_prot_end)]
+        elif exon_prot_start.is_integer(): #ragged residues at end of exon
+            ragged_stop = math.ceil(exon_prot_end)
+            full_stop = math.floor(exon_prot_end)
+            aa_seq_ragged = full_aa_seq[int(exon_prot_start):full_stop]+'-'+full_aa_seq[ragged_stop-1]
+            aa_seq_nr = full_aa_seq[int(exon_prot_start):full_stop]
+        else: #ragged residues at both start and end of exon
+            ragged_start = math.floor(exon_prot_start)
+            full_start = math.ceil(exon_prot_start)
+            ragged_stop = math.ceil(exon_prot_end)
+            full_stop = math.floor(exon_prot_end)
+            aa_seq_ragged = full_aa_seq[ragged_start]+'-'+full_aa_seq[full_start:full_stop]+'-'+full_aa_seq[ragged_stop-1]
+            aa_seq_nr = full_aa_seq[full_start:full_stop]
 
-    return aa_seq_ragged, aa_seq_nr, exon_prot_start, exon_prot_end, exon_coding_start, exon_coding_end
+        return aa_seq_ragged, aa_seq_nr, exon_prot_start, exon_prot_end, exon_coding_start, exon_coding_end, warnings
+
+
 
 def getAllExonSequences(exons, transcripts, genes):
+    """
+    Run getExonCodingInfo() for all exons in the processed exon dataframe, and add information to exon dataframe
+
+    Parameters
+    ----------
+    exons: pandas.DataFrame
+        Dataframe containing all exon information, created by processedExons() function
+    transcripts: pandas.DataFrame
+        Dataframe containing all transcript information, created by processedTranscripts() function
+    genes: pandas.DataFrame
+        DataFrame containing all gene information, created by processedGenes() function
+
+    Returns
+    -------
+    exons: pandas.DataFrame
+        Updated version of exon dataframe containing information about the protein sequence coding for by each exon and its location in the protein sequence
+    """
+    #initialize lists to be saved in exon
     exon_seqs_ragged = []
     exon_seqs_nr = []
     exon_prot_starts = []
     exon_prot_ends = []
     coding_starts = []
     coding_ends = []
-    for e in range(exons.shape[0]):
-        exon = exons.iloc[e]
-        try:
-            strand = genes.loc[exon['Gene stable ID'], 'Strand']
-        except:
-            print(exon)
-            print(exon['Gene stable ID'])
-            raise ValueError('Issue as before')
+    warnings = []
+    for e, exon in exons.iterrows():
+        #get strand that gene is found on (forward or reverse)
+        strand = genes.loc[exon['Gene stable ID'], 'Strand']
+
+        #get protein sequence associated with exon
         results = getExonCodingInfo(exon, transcripts, strand)
-        #coding_starts.append(results[0])
-        #coding_ends.append(results[1])
+        #save data to lists
         exon_seqs_ragged.append(results[0])
         exon_seqs_nr.append(results[1])
         exon_prot_starts.append(results[2])
         exon_prot_ends.append(results[3])
         coding_starts.append(results[4])
         coding_ends.append(results[5])
+        warnings.append(results[6])
     
-    #exons['Exon Coding Start (bp)'] = coding_starts
-    #exons['Exon Coding Stop (bp)']
+    #save lists to dataframe columns
     exons['Exon Start (Protein)'] = exon_prot_starts
     exons['Exon End (Protein)'] = exon_prot_ends
     exons['Exon AA Seq (Ragged)'] = exon_seqs_ragged
     exons['Exon AA Seq (Full Codon)'] = exon_seqs_nr
     exons['Exon Start (Gene Coding)'] = coding_starts
     exons['Exon End (Gene Coding)'] = coding_ends
+    exons['Warnings (AA Seq)'] = warnings
         
     return exons
 
-def exonlength(row, seq_col = 'Exon Sequence'):
+def exonlength(row, seq_col = 'Exon Sequence', exon_start_col = 'Exon Start (Gene)', exon_end_col = 'Exon End (Gene)'):
+    """
+    Given a series object with exon information (i.e. row of the exon dataframe), identify the length of the exon based on either the provided sequence or the start and end position of the exon in the gene sequence, if sequence is not in row.
+
+    Parameters
+    ----------
+    row: pandas.Series
+        Row of the exon dataframe or series object with exon information
+    seq_col: str
+        Name of the column containing the exon sequence. Default is 'Exon Sequence'
+    exon_start_col: str
+        Name of the column containing the start position of the exon in the gene sequence. Default is 'Exon Start (Gene)'
+    exon_end_col: str
+        Name of the column containing the end position of the exon in the gene sequence. Default is 'Exon End (Gene)'
+
+    Returns
+    ----------
+    length: int
+        Length of the exon
+    """
     exon = row[seq_col]
     if exon is np.nan:
-        length = row['Exon End (Gene)']-row['Exon Start (Gene)']+1
+        length = row[exon_start_col]-row[exon_end_col]+1
     else:
         length = len(exon)
+        #check if the sequence length matches the length of the exon based on the start and end position of the exon in the gene sequence
+        if length != row['Exon End (Gene)']-row['Exon Start (Gene)']+1:
+            logger.warning(f'Conflicting exon lengths based on sequence and genomic location for {row["Exon stable ID"]}. Exon sequence length: {length}, Exon length based on genomic location: {row["Exon End (Gene)"]-row["Exon Start (Gene)"]+1}. Using length from exon sequence.')
         
     return length
 
 
 def translate(row, coding_seq_col = 'Coding Sequence'):
+    """
+    Given a series object with transcript information (i.e. row of the transcript dataframe), translate the coding sequence into an amino acid sequence, checking to make sure coding sequence is valid: If the coding sequence is not a multiple of 3, does not start with a start codon, or is not available, return np.nan for the amino acid sequence and specify the reason in the warnings list. Function intended for use with pandas apply on transcript dataframe.
+
+    Parameters
+    ----------
+    row: pandas.Series
+        Row of the transcript dataframe or series object with transcript information
+    coding_seq_col: str
+        Name of the column containing the coding sequence. Default is 'Coding Sequence'
+
+    Returns
+    ----------
+    row: pandas.Series
+        Updated row of the transcript dataframe with a new 'Amino Acid Sequence' column and an updated 'Warnings' column
+    """
+    #get coding sequence
     seq = row[coding_seq_col]
-    if seq is np.nan or seq is None:
-        row['Translation Errors'] = 'No Coding Sequence'
+    
+    if seq is np.nan or seq is None:    #check if coding sequence is available
         row['Amino Acid Sequence'] = np.nan
-        return row
-    elif len(seq) % 3 != 0 and seq[0:3] != 'ATG':
-        row['Translation Errors'] = 'Start codon error (not ATG);Partial codon error'
-        row['Amino Acid Sequence'] = np.nan
-    elif len(seq) % 3 != 0:
-        row['Translation Errors'] = 'Partial codon error'
-        row['Amino Acid Sequence'] =np.nan
-        #trim sequence explicitly
-    elif seq[0:3] != 'ATG':
-        row['Translation Errors'] = 'Start codon error (not ATG)'
-        row['Amino Acid Sequence'] = np.nan
-    else:
-        row['Translation Errors'] = np.nan
-        #translate
+    elif len(seq) % 3 != 0 and seq[0:3] != 'ATG':   #check if sequence starts with start codon and is a multiple of 3
+        if row['Warnings'] != row['Warnings']:
+            row['Warnings'] = 'Start codon error (not ATG);Partial codon error'
+            row['Amino Acid Sequence'] = np.nan
+        else:
+            row['Warnings'] = row['Warnings'] + ';Start codon error (not ATG);Partial codon error'
+            row['Amino Acid Sequence'] = np.nan
+    elif len(seq) % 3 != 0:     #check if sequence is a multiple of 3 (no partial codons)
+        if row['Warnings'] != row['Warnings']:
+            row['Warnings'] = 'Partial codon error'
+            row['Amino Acid Sequence'] =np.nan
+        else:
+            row['Warnings'] = row['Warnings'] + ';Partial codon error'
+            row['Amino Acid Sequence'] = np.nan
+        #trim sequence explicitly? Currently will not translate
+    elif seq[0:3] != 'ATG':     #check if sequence starts with start codon
+        if row['Warnings'] != row['Warnings']:
+            row['Translation Errors'] = 'Start codon error (not ATG)'
+            row['Amino Acid Sequence'] = np.nan
+        else:
+            row['Warnings'] = row['Warnings'] + ';Start codon error (not ATG)'
+            row['Amino Acid Sequence'] = np.nan
+    else:      #if no other errors arise, translate sequence
+        row['Warnings'] = np.nan
+        #translate and save to row
         coding_strand = Seq(seq)
         aa_seq = str(coding_strand.translate(to_stop = True))
         row['Amino Acid Sequence'] = aa_seq
         
-    
     return row
     
 
