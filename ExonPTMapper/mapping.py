@@ -237,6 +237,7 @@ class PTM_mapper:
         print('Getting location of PTMs in transcript')
         #extract transcript level info required for mapping process (coding start and location of splice boundaries)
         transcript_data = self.transcripts[['Relative CDS Start (bp)', 'Exon cuts']].copy()
+        #remove transcripts without necessary data (nan, or with error string)
         transcript_data = transcript_data.dropna(subset = ['Exon cuts', 'Relative CDS Start (bp)'])
         #convert exon cuts into list containing integers rather than a single string
         transcript_data['Exon cuts'] = transcript_data['Exon cuts'].apply(lambda cut: np.array([int(x) for x in cut.split(',')]))
@@ -1001,6 +1002,65 @@ class PTM_mapper:
                 num_isoforms = alt_ptms['Alternative Transcript'].nunique()
             return self.ptm_info[self.ptm_info[save_col] == 1].shape[0]/self.ptm_info.shape[0], num_isoforms
     
+    def compareAllFlankSeqs(self, flank_size = 5, unique_isoforms = True):
+        """
+        Given the alternative ptms and canonical ptm data, compare flanking sequences and determine if they are identical. 
+        
+        Parameters
+        ----------
+        mapper: PTM_mapper object
+            mapper object containing flanking sequence data for both alternative(alternative_ptms or isoform_ptms) and canonical ptms (ptm_info)
+        flank_size:
+            size of the flanking sequence to compare. IMPORTANT, this should not be larger than the available flanking sequence in the ptm_info dataframe
+        unique_isoforms: bool
+            If True, compare ptms found in unique isoforms only. If False, compare ptms found in all transcripts, regardless of if there is redundant protein sequences
+        
+        Returns
+        -------
+        conserved_flank: list
+            list of 1s and 0s indicating if the flanking sequence is conserved (1) or not (0)
+        """
+        conserved_flank = []
+        if unique_isoforms:
+            res = self.isoform_ptms.copy()
+        else:
+            res = self.alternative_ptms.copy()
+        for i in res.index:
+            #check if alt flanking seq exists
+            alt_flank = res.loc[i, 'Flanking Sequence']
+            if alt_flank != alt_flank:
+                conserved_flank.append(np.nan)
+            else:
+                #find mod loc in sequence
+                mod_loc = int(re.search('[a-z]+', alt_flank).span()[0])
+                #find n_term loc (in case flank is longer than actual surrounding region)
+                if mod_loc - flank_size >= 0:
+                    n_term = mod_loc -flank_size
+                else:
+                    n_term = 0
+                
+                #find c_term loc (in case flank is longer than actual surrounding region)
+                if mod_loc + flank_size+1 <= len(alt_flank):
+                    c_term = mod_loc + flank_size+1
+                alt_flank = alt_flank[n_term:c_term]
+
+                #check if flank sequence exists/was found and save
+                if alt_flank != alt_flank:
+                    conserved_flank.append(np.nan)
+                else:
+                    ptm = res.loc[i, 'Source of PTM']
+                    if ';' in ptm:
+                        ptm = ptm.split(';')[0]
+                    can_flank = self.ptm_info.loc[ptm, 'Flanking Sequence']
+                    can_flank = can_flank[n_term:c_term]
+                    conserved_flank.append(matchedFlankSeq(can_flank, alt_flank))
+        return conserved_flank
+    
+    def getFlankConservation(self, flank_size = 5, unique_isoforms = True):
+        if unique_isoforms:
+            self.isoform_ptms['Conserved Flank'] = self.compareAllFlankSeqs(flank_size= flank_size, unique_isoforms = unique_isoforms)
+        else:
+            self.alternative_ptms['Conserved Flank'] = self.compareAllFlankSeqs(flank_size=flank_size, unique_isoforms = unique_isoforms)
 
     def addSpliceEventsToAlternative(self, splice_events_df):
         """
@@ -1397,6 +1457,21 @@ def convertToHG19(hg38_location, chromosome, strand, liftover_object = None):
             return -1
     else:
         return np.nan
+    
+def matchedFlankSeq(seq1, seq2):
+    """
+    Given two sequences (or strings), determine if they are identical.
+
+    Parameters
+    ----------
+    seq1, seq2: str
+        sequences to compare (order does not matter)
+    
+    Returns
+    -------
+    1 if the sequences are identical, 0 otherwise
+    """
+    return (seq1 == seq2)*1
         
         
 def returnAlignment(seq1, seq2, canonical_exon_id, alternative_exon_id):
@@ -1495,20 +1570,24 @@ def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fna
         print('saving\n')
         mapper.transcripts.to_csv(config.processed_data_dir + 'transcripts.csv')
             
+    #get protein sequence associated with each exon
     if 'Exon AA Seq (Full Codon)' not in mapper.exons.columns or restart_all:
         print('Getting exon-specific amino acid sequence\n')
         mapper.exons = processing.getAllExonSequences(mapper.exons, mapper.transcripts, mapper.genes)
         mapper.exons.to_csv(config.processed_data_dir + 'exons.csv', index = False)
         
+    #identify canonical transcripts with matching protein sequence information in Ensembl and ProteomeScout
     if config.available_transcripts is None:
         print('Identifying transcripts with matching information from UniProt canonical proteins in ProteomeScout')
         processing.getMatchedTranscripts(mapper.transcripts, update = restart_all)
     
+    #get protein-specific information
     if mapper.proteins is None or restart_all:
         print('Getting protein-specific information')
         mapper.proteins = processing.getProteinInfo(mapper.transcripts, mapper.genes)
         mapper.proteins.to_csv(config.processed_data_dir + 'proteins.csv')
         
+    #collapse transcripts sharing the same protein sequence into a single row to create isoform datframe
     if mapper.isoforms is None or restart_all:
         print('Getting unique protein isoforms from transcript data')
         mapper.isoforms = processing.getIsoformInfo(mapper.transcripts)
