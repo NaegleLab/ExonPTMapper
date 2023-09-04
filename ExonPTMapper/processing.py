@@ -19,7 +19,7 @@ import time
 logger = logging.getLogger('Processing')
 logger.setLevel(logging.DEBUG)
 handler = logging.FileHandler(config.processed_data_dir + 'ExonPTMapper.log')
-log_format = logging.Formatter('%(asctime)s\t%(name)s\t%(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
+log_format = logging.Formatter('%(asctime)s %(name)s %(levelname)s: %(message)s', datefmt='%m/%d/%Y %I:%M:%S %p')
 handler.setFormatter(log_format)
 logger.addHandler(handler)
 
@@ -118,7 +118,7 @@ def processExons(exon_info, exon_sequences):
     logger.info('Adding sequence information to exon dataframe')
 
     #check to see what exons did not have sequence information in sequence data
-    missing_seq_exons = set(exons['Exon stable ID']).difference(set(exon_sequences['Exon stable ID']))
+    missing_seq_exons = set(exon_info['Exon stable ID']).difference(set(exon_sequences['Exon stable ID']))
     if len(missing_seq_exons) > 0:
         logger.warning(f'{len(missing_seq_exons)} exons did not have sequence information in sequence data. Transcripts containing these exons will be removed from analysis. The following exons do not have sequence information: {", ".join(missing_seq_exons)}.')
 
@@ -303,7 +303,10 @@ def getIsoformInfo(transcripts):
             tmp = tmp.dropna(subset = 'UniProtKB/Swiss-Prot ID')
             isoform_id.append(tmp['UniProtKB/Swiss-Prot ID'].unique()[0] + '-1')
     isoforms['Isoform ID'] = isoform_id
-    logger.isoforms('Isoform dataframe created.')
+    #get length of each isoform
+    isoforms['Isoform Length'] = isoforms['Amino Acid Sequence'].apply(len)
+    
+    logger.info('Isoform dataframe created.')
     return isoforms
 
 def getProteinInfo(transcripts, genes):
@@ -333,7 +336,7 @@ def getProteinInfo(transcripts, genes):
     proteins = config.translator[config.translator['Uniprot Canonical'] == 'Canonical']
     proteins = proteins[['UniProtKB/Swiss-Prot ID','Transcript stable ID']].drop_duplicates().copy()
     #aggregate information along unique UniProt IDs
-    proteins = proteins.groupby('UniProtKB/Swiss-Prot ID').agg(','.join)
+    proteins = proteins.groupby('UniProtKB/Swiss-Prot ID').agg(';'.join)
     proteins.columns = ['Canonical Transcripts']
 
     #repeat above process but for alternative UniProt isoforms: get transcripts and number of isoforms
@@ -342,7 +345,7 @@ def getProteinInfo(transcripts, genes):
     variants_grouped = variants.groupby('UniProtKB/Swiss-Prot ID')
     num_variants = variants_grouped.count() + 1
     num_variants.columns = ['Number of Uniprot Isoforms']
-    variant_trans = variants_grouped.agg(','.join)
+    variant_trans = variants_grouped.agg(';'.join)
     variant_trans.columns = ['Alternative Transcripts (Uniprot Isoforms)']
 
     #add available canonical transcripts with matching uniprot sequence (check if transcript is found in config.available_transcripts list)
@@ -355,7 +358,7 @@ def getProteinInfo(transcripts, genes):
                     match.append(available)
             #add to list of matches (if no matches, add np.nan)
             if len(match) > 0:
-                canonical_matches.append(','.join(match))
+                canonical_matches.append(';'.join(match))
             else:
                 canonical_matches.append(np.nan)
         proteins['Matched Canonical Transcripts'] = canonical_matches
@@ -383,18 +386,18 @@ def getProteinInfo(transcripts, genes):
                         match.append(available)
                 #add to list of matches (if no matches, add np.nan)
                 if len(match) > 0:
-                    alternative_matches.append(','.join(match))
+                    alternative_matches.append(';'.join(match))
                 else:
                     alternative_matches.append(np.nan)
         proteins['Matched Alternative Transcripts'] = alternative_matches
     
     #grab Ensembl gene ids associated with each uniprot protein, explode on each gene id
     prot_genes = config.translator.groupby('UniProtKB/Swiss-Prot ID')['Gene stable ID'].apply(set)
-    proteins['Gene stable IDs'] = prot_genes.apply(','.join)
+    proteins['Gene stable IDs'] = prot_genes.apply(';'.join)
     prot_genes = prot_genes.explode().reset_index()
 
     #grab all transcripts associated with the gene, that are not associated with the canonical uniprot protein
-    alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(','.join).reset_index()
+    alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(';'.join).reset_index()
     prot_genes = pd.merge(prot_genes,alt_transcripts, on = 'Gene stable ID', how = 'left')
 
     #grab genes for which there are multiple uniprot proteins associated with it, add to prot_genes info
@@ -408,8 +411,8 @@ def getProteinInfo(transcripts, genes):
 
 
     #add all transcripts associated with the gene, regardless of if it is associated with a uniprot protein
-    proteins['Alternative Transcripts (All)'] = prot_genes.dropna(subset = 'Transcript stable ID').groupby('UniProtKB/Swiss-Prot ID')['Transcript stable ID'].apply(set).apply(','.join)
-    proteins['Unique Gene'] = prot_genes.groupby('UniProtKB/Swiss-Prot ID')['Unique Gene'].apply(set).apply(','.join)
+    proteins['Alternative Transcripts (All)'] = prot_genes.dropna(subset = 'Transcript stable ID').groupby('UniProtKB/Swiss-Prot ID')['Transcript stable ID'].apply(set).apply(';'.join)
+    proteins['Unique Gene'] = prot_genes.groupby('UniProtKB/Swiss-Prot ID')['Unique Gene'].apply(set).apply(';'.join)
 
     #report how many proteins are not associated with a unique gene
     num_nonunique = prot_genes[prot_genes['Unique Gene'] == 'No'].shape[0]
@@ -444,7 +447,7 @@ def collapseGenesByProtein(genes):
     num_uniprot.name = 'Number of Associated Uniprot Proteins'
     
     #get the isoform ids
-    proteins_from_gene = genes.dropna(subset = 'UniProtKB/Swiss-Prot ID').groupby('Gene stable ID')['UniProtKB/Swiss-Prot ID'].apply(','.join)
+    proteins_from_gene = genes.dropna(subset = 'UniProtKB/Swiss-Prot ID').groupby('Gene stable ID')['UniProtKB/Swiss-Prot ID'].apply(';'.join)
     proteins_from_gene.name = 'Associated Uniprot Proteins'
     
     genes.index = genes['Gene stable ID']

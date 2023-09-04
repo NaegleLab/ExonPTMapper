@@ -10,6 +10,17 @@ from ExonPTMapper import config
 def checkForTranslatorErrors(translator, logger = None):
     """
     Check for potential errors in the translator file (same gene name and transcript ID are associated with multiple protein IDs)
+
+    Parameters
+    ----------
+    translator: pandas dataframe
+        dataframe containing information from the translator file (saved as config.translator when config is imported)
+    logger: logging object
+        logger object to log warnings to. If None, warnings will only be printed to console
+
+    Returns
+    -------
+    None, but outputs any warnings to console and log file (if logger is not None)
     """
     #grab entries with duplicate gene ID and transcript ID: potential errors with UniProtID
     test_for_errors = translator[translator.duplicated(['Gene name', 'Gene stable ID', 'Transcript stable ID'], keep = False)]
@@ -36,28 +47,42 @@ def checkForTranslatorErrors(translator, logger = None):
     #add warning to translator dataframe for genes with multiple possible canonical proteins
     translator.loc[translator['Gene name'].isin(test_for_ambiguity[test_for_ambiguity > 1].index), 'Warnings'] = "Multiple Possible Canonical Proteins for Gene"
 
-def getIsoformInfo(transcripts):
-    """
-    Get dataframe where each row corresponds to a unique protein isoform, with transcripts with identitical protein information being in the same row
-    """
-    #add amino acid sequence to translator information
-    merged = config.translator.merge(transcripts['Amino Acid Sequence'], left_on = 'Transcript stable ID', right_index = True)
-    
-    #group information by gene stable ID and amino acid sequence (each unique protein isoform associated with the gene)
-    transcripts =  merged.groupby(['Gene stable ID','Gene name', 'Amino Acid Sequence'])['Transcript stable ID'].apply(set).apply(','.join)
-    proteins = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['UniProtKB/Swiss-Prot ID'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
-    isoform_id = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['UniProtKB isoform ID'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
-    canonical = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['Uniprot Canonical'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
+#def getIsoformInfo(transcripts):
+#    """
+#    Get dataframe where each row corresponds to a unique protein isoform, with transcripts with identitical protein information being #in the same row
+#
+#    Parameters
+#    ----------
+#    transcripts: pandas dataframe
+#    """
+#    #add amino acid sequence to translator information
+#    merged = config.translator.merge(transcripts['Amino Acid Sequence'], left_on = 'Transcript stable ID', right_index = True)
+#    
+#    #group information by gene stable ID and amino acid sequence (each unique protein isoform associated with the gene)
+#    transcripts =  merged.groupby(['Gene stable ID','Gene name', 'Amino Acid Sequence'])['Transcript stable ID'].apply(set).apply(','.join)
+#    proteins = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['UniProtKB/Swiss-Prot ID'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
+#    isoform_id = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['UniProtKB isoform ID'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
+#    canonical = merged.groupby(['Gene stable ID', 'Gene name', 'Amino Acid Sequence'])['Uniprot Canonical'].apply(set).apply(lambda x: ','.join(y for y in x if y == y))
     
     #combine into dataframe
-    isoforms = pd.concat([proteins, isoform_id, canonical, transcripts], axis = 1).reset_index()
-    isoforms['Uniprot Canonical'] = isoforms['Uniprot Canonical'].replace('', 'Ensembl Alternative')
-    return isoforms
+#    isoforms = pd.concat([proteins, isoform_id, canonical, transcripts], axis = 1).reset_index()
+#    isoforms['Uniprot Canonical'] = isoforms['Uniprot Canonical'].replace('', 'Ensembl Alternative')
+#    return isoforms
 
 
 def is_canonical(row):
     """
-    Based on the uniprot ID in translator row, label each protein as canonical or isoform
+    Based on the uniprot ID in translator row, label each protein as canonical or isoform. Intended for use with apply function on dataframe
+
+    Parameters
+    ----------
+    row: pandas series
+        row of translator dataframe
+
+    Returns
+    -------
+    ans: string
+        'Canonical' if canonical protein, 'Alternative' if isoform, np.nan if no uniprot ID
     """
     if row['UniProtKB/Swiss-Prot ID'] is np.nan:
         ans = np.nan
@@ -72,6 +97,18 @@ def is_canonical(row):
 
 
 def stringToBoolean(string):
+    """
+    Convert string object to boolean. False, false, and No all indicate False boolean. True, true, and Yes all indicate True boolean. All other values return np.nan.
+
+    Parameters
+    ----------
+    string: string
+        string to convert to boolean
+    
+    Returns
+    -------
+    boolean
+    """
     if type(string) == bool:
         return string
     elif string == 'False' or string == 'false' or string == 'No':
@@ -82,6 +119,23 @@ def stringToBoolean(string):
         return np.nan
 
 def processEnsemblFasta(file, id_col = 'ID', seq_col = 'Seq'):
+    """
+    Process fasta file downloaded from Ensembl to create dataframe with ID and sequence columns
+
+    Parameters
+    ----------
+    file: string
+        path to fasta file
+    id_col: string
+        name of column to store ID. Assumes this is found in the .id attribute of SeqIO object
+    seq_col: string
+        name of column to store sequence. Assumes this is found in the .seq attribute of SeqIO object
+    
+    Returns
+    -------
+    pandas dataframe
+        dataframe with ID and sequence columns
+    """
     data_dict = {id_col:[],seq_col:[]}
     with gzip.open(file,'rt') as handle:
         for record in SeqIO.parse(handle, 'fasta'):
@@ -95,7 +149,19 @@ def processEnsemblFasta(file, id_col = 'ID', seq_col = 'Seq'):
     
 def getUniProtCanonicalIDs(translator, ID_type = 'Transcript'):
     """
-    Use translator to extract only the canonical proteins (either Uniprot IDs or Transcript IDs)
+    Use translator to extract only the canonical protein ids (either Uniprot IDs or Transcript IDs)
+
+    Parameters
+    ----------
+    translator: pandas dataframe
+        dataframe containing information from the translator file (saved as config.translator when config is imported)
+    ID_type: string
+        whether to return canonical transcript IDs (Ensembl) or canonical protein IDs (UniProt). Either 'Transcript' or 'Protein'
+
+    Returns
+    -------
+    list
+        list of canonical IDs
     """
     if ID_type == 'Transcript':
         return config.translator.loc[config.translator['canonicals']=='canonical', 'Transcript stable ID'].values
