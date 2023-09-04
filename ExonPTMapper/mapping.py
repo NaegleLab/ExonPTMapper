@@ -764,7 +764,33 @@ class PTM_mapper:
             return np.nan
         else:  
             return ptms_in_region
+    
+    def projectPTMsToRegion(self, chromosome, strand, start, end):
+        """
+        Given a genomic region (such as the region encoding an exon of interest), figure out the prospective PTMs that are found in that region.
 
+        Parameters
+        ----------
+        chromosome: str
+            chromosome where region is located
+        strand: int
+            DNA strand for region is found on (1 for forward, -1 for reverse)
+        start: int
+            start position of region on the chromosome/strand (should always be less than end)
+        end: int
+            end position of region on the chromosome/strand (should always be greater than start)
+
+        Returns
+        -------
+        ptms_in_region: pandas.DataFrame
+            dataframe containing all PTMs found in the region. If no PTMs are found, returns np.nan.
+        """
+
+        ptms_in_region = self.ptm_coordinates[self.ptm_coordinates['Chromosome/scaffold name'] == chromosome]
+        ptms_in_region = ptms_in_region[ptms_in_region['Strand'] == strand]
+        ptms_in_region = ptms_in_region[(ptms_in_region['Gene Location (NC)'] >= start) & (ptms_in_region['Gene Location (NC)'] <= end)]
+        return ptms_in_region
+        
         
     def mapPTMtoExons(self, ptm, trim_exons = None, alternative_only = True):
         """
@@ -1408,9 +1434,6 @@ class PTM_mapper:
         #drop isoforms shorter than 20 amino acids
         isoform_ptms = isoform_ptms[isoform_ptms['Isoform Length'] >= required_length]
 
-        #extract important columns, and drop duplicates
-        isoform_ptms = isoform_ptms[['Isoform ID', 'Source of PTM', 'Frame', 'Alternative Protein Position (AA)', 'Alternative Residue', 'Modifications','Flanking Sequence', 'Tryptic Fragment']]
-        isoform_ptms = isoform_ptms.drop_duplicates()
 
 
         self.isoform_ptms = isoform_ptms
