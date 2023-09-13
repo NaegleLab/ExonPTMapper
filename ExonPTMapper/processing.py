@@ -287,6 +287,7 @@ def getIsoformInfo(transcripts):
     
     #iterate through each grouped isoform, if it has uniprot id, use that, else make up new name that follows this format 'ENS_{Gene Name}_{Isoform_num}'
     isoform_id = []
+    isoform_type = []
     isoform_numbers = defaultdict(int)
     for i, row in isoforms.iterrows():
         #grab tranlator information for transcripts associated with isoform
@@ -296,13 +297,20 @@ def getIsoformInfo(transcripts):
             gene_name = tmp['Gene name'].unique()[0]
             isoform_numbers[gene_name] = isoform_numbers[gene_name] + 1
             isoform_id.append(f'ENS-{gene_name}-{isoform_numbers[gene_name]}')
+            isoform_type.append('Alternative')
         elif not tmp['UniProtKB isoform ID'].isna().all():
             tmp = tmp.dropna(subset = 'UniProtKB isoform ID')
             isoform_id.append(tmp['UniProtKB isoform ID'].unique()[0])
+            if '-1' in tmp['UniProtKB isoform ID'].unique()[0]:
+                isoform_type.append('Canonical')
+            else:
+                isoform_type.append('Alternative')
         else:
             tmp = tmp.dropna(subset = 'UniProtKB/Swiss-Prot ID')
             isoform_id.append(tmp['UniProtKB/Swiss-Prot ID'].unique()[0] + '-1')
+            isoform_type.append('Canonical')
     isoforms['Isoform ID'] = isoform_id
+    isoforms['Isoform Type'] = isoform_type
     #get length of each isoform
     isoforms['Isoform Length'] = isoforms['Amino Acid Sequence'].apply(len)
     
