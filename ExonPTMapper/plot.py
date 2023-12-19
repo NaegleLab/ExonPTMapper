@@ -8,7 +8,7 @@ from ExonPTMapper import config
 
 
 class plotter:
-    def __init__(self):
+    def __init__(self, mapper = None):
         """
         Class for identifying relevant information about PTMs, and maps them to corresponding exons, transcripts, and genes
         
@@ -29,25 +29,54 @@ class plotter:
         #load necessary data
         self.load_plotter()
         
-    def plotTranscripts(self, gene_id = None, gene_name = None, transcript_id = None, functional_threshold = 0, sort_by_function = True, coding_color = 'red', noncoding_color = 'white'):
+    def plotTranscripts(self, id, id_type = 'Gene Name', fig_width = 15, functional_threshold = 0, sort_by_function = True, coding_color = 'red', noncoding_color = 'white', add_ptms = False, ax = None):
         """
-        Given a gene ID, plot all transcripts associated with that same gene. Given transcript ID, plot all transcripts associated with the same gene as the given transcript. Default to given gene ID.
+        Given a gene ID, plot all transcripts associated with a given gene. Coding regions are highlighted, by default, in red, and noncoding regions are white. Exons always appear in rank order/direction of translation, even if transcripts are on the reverse strand.
+        
+        Parameters
+        ----------
+        id: string
+            Name/ID of the gene/transcript of interest. If transcript ID, will plot all transcripts associated with the same gene as the given transcript.
+        id_type: string, optional
+            Indicates the type of ID given. Options are 'Gene ID', 'Gene Name', or 'Transcript ID'. The default is 'Gene Name'.
+        fig_width: float, optional
+            Indicates the width of the figure to plot. The default is 15.
+        functional_threshold: float, optional
+            Indicates the minimum TRIFID functional score required for transcript to be plotted. 0 will plot all transcripts, 1 is the maximum score. The default is 0.
+        sort_by_function: bool, optional
+            If True, will sort transcripts by TRIFID functional score. If False, transcripts are not sorted. The default is True.
+        coding_color: string, optional
+            Color to use to indicate the coding region of the exons. Default is 'red'.
+        noncoding_color: string, optional
+            Color to use to indicate the noncoding region of the exons. Default is 'white'.
+        add_ptms: bool, optional
+            If True, will add a line where PTMs are located. Default is False.
+
+        Returns
+        -------
+        ax: matplotlib axis
+            figure containing all transcripts plotted
+
         """
+
         #get gene specific transcripts
-        if gene_id is not None:
-            gene_exons = self.exons[self.exons['Gene stable ID'] == gene_id]
+        if id_type == 'Gene ID':
+            gene_id = id
+            gene_exons = self.exons[self.exons['Gene stable ID'] == id]
             if gene_exons.shape[0] == 0:
-                raise ValueError('Gene ID not found in dataset')
-        elif gene_name is not None:
-            gene = self.genes[self.genes['Gene name'] == gene_name]
+                raise ValueError(f'ID ({id_type}) not found in dataset')
+        elif id_type == 'Gene Name':
+            gene = self.genes[self.genes['Gene name'] == id]
             if gene.shape[0] == 0:
-                raise ValueError('Gene name not found in dataset')
+                raise ValueError(f'ID ({id_type}) not found in dataset')
             gene_id = gene.index.values[0]
+            gene = self.genes.loc[gene_id]
             gene_exons = self.exons[self.exons['Gene stable ID'] == gene_id]
             if gene_exons.shape[0] == 0:
                 raise ValueError('No exons found associated with that gene')
-        elif transcript_id is not None:
-            gene_id = self.transcripts.loc[transcript_id, 'Gene stable ID']
+        elif id_type == 'Transcript ID':
+            gene_id = self.transcripts.loc[id, 'Gene stable ID']
+            gene = self.genes.loc[gene_id]
             gene_exons = self.exons[self.exons['Gene stable ID'] == gene_id]
         else:
             raise ValueError('No gene or transcript indicate. Please provide gene_id, gene_name, or transcript_id')
@@ -56,6 +85,7 @@ class plotter:
         #get relevant transcripts
         transcript_ids = gene_exons['Transcript stable ID'].unique()
         tmp_trans = self.transcripts.loc[transcript_ids]
+
         #remove transcripts with missing coding information
         tmp_trans['Relative CDS Start (bp)'] = pd.to_numeric(tmp_trans['Relative CDS Start (bp)'], errors = 'coerce')
         missing_transcripts = list(tmp_trans.loc[tmp_trans['Relative CDS Start (bp)'].isna()].index.values)
@@ -72,7 +102,8 @@ class plotter:
         
         #establish plot range   
         num_transcripts = len(transcript_ids)
-        fig, ax = plt.subplots(figsize = (15,num_transcripts))
+        if ax is None:
+            fig, ax = plt.subplots(figsize = (fig_width,num_transcripts))
         ax.set_ylim([0,num_transcripts])
         #transcript box
         gene_start = self.genes.loc[gene_id, 'Gene start (bp)']
@@ -92,20 +123,32 @@ class plotter:
             #get location of cds start and cds end
             tid_exons = gene_exons[gene_exons['Transcript stable ID'] == tid]
             gene_cds_start, gene_cds_end = getGenomicCodingRegion(self.transcripts.loc[tid], tid_exons, self.genes.loc[gene_id,'Strand']) 
-            ax.annotate(tid, (gene_start-1500, num_transcripts - row +0.6), ha = 'right', va = 'center')
-            ax.annotate(trans_type, (gene_start-1500, num_transcripts - row +0.4), ha = 'right', va = 'center')
+
+            #add transcript name and type (canonical/alternative) to plot
+            if gene['Strand'] == 1:
+                ax.annotate(tid, (gene_start-1500, num_transcripts - row +0.6), ha = 'right', va = 'center')
+                ax.annotate(trans_type, (gene_start-1500, num_transcripts - row +0.4), ha = 'right', va = 'center')
+            else:
+                ax.annotate(tid, (gene_end+1500, num_transcripts - row +0.6), ha = 'right', va = 'center')
+                ax.annotate(trans_type, (gene_end+1500, num_transcripts - row +0.4), ha = 'right', va = 'center')
+
+            #add line to indicate the gene
             ax.plot([gene_start, gene_end], [num_transcripts-row+0.5, num_transcripts-row+0.5], c = 'k')
+
+            #move through each exon associated with transcript and plot each exon as a rectangle.
             for i in tid_exons.index:
+                #extract starting and end positions of exon
                 fiveprime = int(tid_exons.loc[i, "Exon Start (Gene)"])
                 threeprime = int(tid_exons.loc[i, "Exon End (Gene)"])
+
                 #check if exon is fully noncoding, fully coding, or if cds start/stop exists in exon. Plot exon accordingly
-                if threeprime < gene_cds_start or fiveprime > gene_cds_end:
+                if threeprime < gene_cds_start or fiveprime > gene_cds_end: #fully noncoding
                     rect = patches.Rectangle((fiveprime,num_transcripts - row +0.2), threeprime - fiveprime, 0.6, facecolor = noncoding_color, edgecolor = 'black', zorder = 2)
                     ax.add_patch(rect)
-                elif fiveprime >= gene_cds_start and threeprime <= gene_cds_end:
+                elif fiveprime >= gene_cds_start and threeprime <= gene_cds_end: #fully coding
                     rect = patches.Rectangle((fiveprime,num_transcripts - row +0.2), threeprime - fiveprime, 0.6, facecolor = coding_color, edgecolor = 'black', zorder = 2)
                     ax.add_patch(rect)
-                else:
+                else:#partially coding
                     noncoding_rect = patches.Rectangle((fiveprime,num_transcripts - row +0.2), threeprime - fiveprime, 0.6, facecolor = noncoding_color, edgecolor = 'black', zorder = 2)
                     ax.add_patch(noncoding_rect)
                     
@@ -121,6 +164,124 @@ class plotter:
             row = row + 1
         ax.set_title(self.genes.loc[gene_id, 'Gene name'])
         ax.axis('off')
+
+        #if on reverse strand, invert x-axis so exons appear in rank order
+        if gene['Strand'] == -1:
+            #invert x-axis
+            ax.invert_xaxis()
+
+
+        if add_ptms:
+            #isolate relevant ptms
+            ptms_in_region = self.ptm_coordinates[self.ptm_coordinates['Chromosome/scaffold name'] == gene['Chromosome/scaffold name']]
+            ptms_in_region = ptms_in_region[ptms_in_region['Strand'] == gene['Strand']]
+            ptms_in_region = ptms_in_region[(ptms_in_region['Gene Location (NC)'] >= gene['Gene start (bp)']) & (ptms_in_region['Gene Location (NC)'] <= gene['Gene end (bp)'])]
+            #add ptms to plot
+            if isinstance(add_ptms, list):
+                for ptm in add_ptms:
+                    loc = ptms_in_region.loc[ptms_in_region['Source of PTM'] == ptm, 'Gene Location (NC)'].values[0]
+                    mod_type = ptms_in_region.loc[ptms_in_region['Source of PTM'] == ptm, 'Modifications'].values[0]
+                    if 'Phospho' in mod_type:
+                        color = 'gold'
+                    elif 'Glyco' in mod_type:
+                        color = 'lightpink'
+                    elif 'Methyl' in mod_type or 'methyl' in mod_type:
+                        color = 'lightblue'
+                    elif 'Ubiquitination' in mod_type:
+                        color = 'orange'
+                    elif 'Acetyl' in mod_type or 'acetyl' in mod_type:
+                        color = 'lightgreen'
+                    elif 'Sumo' in mod_type:
+                        color = 'brown'
+                    else:
+                        color = 'lightgrey'
+                    ax.axvline(loc, c = color, lw = 0.5, zorder = 10)
+            else:
+                for i,row in ptms_in_region.iterrows():
+                    loc = row['Gene Location (NC)']
+                    mod_type = row['Modifications']
+                    if 'Phospho' in mod_type:
+                        color = 'gold'
+                    elif 'Glyco' in mod_type:
+                        color = 'lightpink'
+                    elif 'Methyl' in mod_type or 'methyl' in mod_type:
+                        color = 'lightblue'
+                    elif 'Ubiquitination' in mod_type:
+                        color = 'orange'
+                    elif 'Acetyl' in mod_type or 'acetyl' in mod_type:
+                        color = 'lightgreen'
+                    elif 'Sumo' in mod_type:
+                        color = 'brown'
+                    else:
+                        color = 'lightgrey'
+                    ax.axvline(loc, c = color, lw = 0.5, zorder = 10)
+        #return fig
+
+    def plotCanonical(self, gene_name, show_domains = False, ax = None):
+        prot_id = config.translator[config.translator['Gene name'] == gene_name].dropna(subset = 'UniProtKB/Swiss-Prot ID')['UniProtKB/Swiss-Prot ID'].values[0]
+        
+        #get exon/transcript information
+        translator = config.translator.loc[config.translator['Gene name'] == gene_name, ['Gene name', 'Transcript stable ID', 'UniProtKB/Swiss-Prot ID', 'Uniprot Canonical']].drop_duplicates()
+        translator = translator[translator['Uniprot Canonical'] == 'Canonical']
+        
+        transcript_id = translator['Transcript stable ID'].values[0]
+        exons = plotter.exons[plotter.exons['Transcript stable ID'] == transcript_id]
+        transcript = plotter.transcripts.loc[transcript_id]
+        
+        #set up figure
+        if ax is None:
+            fig, ax = plt.subplots(figsize = (10,1))
+
+        #add exons to plot
+        cds_start = int(transcript['Relative CDS Start (bp)'])
+        for i, row in exons.iterrows():   
+            color = 'blue' if row['Constitutive exon'] == 1 else 'gray'
+            start = (row['Exon Start (Transcript)'] - cds_start)/3 + 1
+            stop = (row['Exon End (Transcript)'] - cds_start)/3 + 1
+            rect = patches.Rectangle((start, 0.1), stop - start, 0.4, facecolor = color, edgecolor = 'black', zorder = 3)
+            ax.add_patch(rect)
+
+        #add ptms onto plot
+        ptms = plotter.ptm_info[plotter.ptm_info['Protein'] == translator['UniProtKB/Swiss-Prot ID'].values[0]].copy()
+        #restrict to the transcript of interest
+        ptm_transcripts = ptms.iloc[0]['Transcripts'].split(';')
+        if len(ptm_transcripts) > 1:
+            for trans, i in zip(ptm_transcripts, range(len(ptm_transcripts))):
+                print(trans)
+                if trans == transcript_id:
+                    correct_transid_loc = i
+                    break
+        else:
+            correct_transid_loc = 0
+
+        #add ptms: color based on whether it is constitutive or non-constitutive
+        for i, row in ptms.iterrows():
+            color = 'blue' if row['PTM Conservation Score'] == 1 else 'red'
+            ax.plot([int(row['PTM Location (AA)']), int(row['PTM Location (AA)'])], [0.5,0.82], color = color, linestyle = '-', zorder = 2)
+            
+        #remove y-axis, set left, top, and right spines to invisible
+        ax.spines['left'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        ax.set_xlabel('Protein Position (AA)')
+        ticks = ax.set_xticks(np.arange(1, len(transcript['Amino Acid Sequence']), int(len(transcript['Amino Acid Sequence'])/5)))
+        
+        if show_domains:
+            domains = config.ps_api.get_domains(prot_id, domain_type='uniprot')
+            #add domains to plot
+            ax.plot([1,len(transcript['Amino Acid Sequence'])], [0.8,0.8], color = 'black', linestyle = '-', zorder = 1)
+            for d in domains:
+                start = int(d[1])
+                stop = int(d[2])
+                rect = patches.Rectangle((start, 0.6), stop - start, 0.4, facecolor = 'lightblue', edgecolor = 'black', zorder = 3)
+                ax.add_patch(rect)
+
+                #add domain label
+                ax.annotate(d[0].replace(' ', '\n'), (start + (stop - start)/2, 0.8), ha = 'center', va = 'center')
+
+        return ax
+            
         
     def annotateProteinSequence(self, protein_id = None, gene_name = None,include_exons = True,include_domains = False, num_aa_per_row = 100, figwidth = 20):
         """
@@ -283,7 +444,7 @@ class plotter:
                 raise ValueError('Transcript ID must be provided to plot alternative transcripts')
 
             ptm_loc_col = 'Alternative Protein Location (AA)'
-            ptm = self.alternative_ptms[(self.alternative_ptms['Alternative Transcript'] == transcript_id) & (self.alternative_ptms['PTM'] == ptm)].squeeze()
+            ptm = self.alternative_ptms[(self.alternative_ptms['Alternative Transcript'] == transcript_id) & (self.alternative_ptms['Source of PTM'] == ptm)].squeeze()
 
             if ptm[ptm_loc_col] == ptm[ptm_loc_col]:
                 ptm_loc = int(ptm[ptm_loc_col])
@@ -580,7 +741,18 @@ class plotter:
     #        ax.axis('off')
             
     def load_plotter(self):
-        #check if each data file exists: if it does, load into self object
+        """
+        Load all data files from processed data directory listed in the config file, and save as attributes of the PTM_mapper object. __init__ function calls this function
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        new attributes of the PTM_mapper object, depending on what files were found (exons, transcripts, genes, ptm_info, ptm_coordinates, alternative_ptms, isoforms)
+        """
+        #check if each data file exists: if it does, load into mapper object
         if os.path.exists(config.processed_data_dir + 'exons.csv'):
             print('Loading exon-specific data')
             self.exons = pd.read_csv(config.processed_data_dir + 'exons.csv')
@@ -599,6 +771,12 @@ class plotter:
         else:
             self.genes = None
             
+        if os.path.exists(config.processed_data_dir + 'isoforms.csv'):
+            print('Loading unique protein isoforms')
+            self.isoforms = pd.read_csv(config.processed_data_dir + 'isoforms.csv')
+        else:
+            self.isoforms = None
+            
         if os.path.exists(config.processed_data_dir + 'proteins.csv'):
             print('Loading protein-specific info')
             self.proteins = pd.read_csv(config.processed_data_dir + 'proteins.csv', index_col = 0)
@@ -608,14 +786,29 @@ class plotter:
         if os.path.exists(config.processed_data_dir + 'ptm_info.csv'):
             print('Loading information on PTMs on canonical proteins')
             self.ptm_info = pd.read_csv(config.processed_data_dir + 'ptm_info.csv',index_col = 0)
+            
+            #check to see if ptm_info is collapsed or not (if each row is a unique ptm)
+            if len(np.unique(self.ptm_info.index)) != self.ptm_info.shape[0]:
+                self.ptm_info = self.ptm_info.reset_index()
+                self.ptm_info = self.ptm_info.rename({'index':'PTM'}, axis = 1)
         else:
             self.ptm_info = None
             
+        if os.path.exists(config.processed_data_dir + 'ptm_coordinates.csv'):
+            print('Loading information on PTMs on canonical proteins')
+            self.ptm_coordinates = pd.read_csv(config.processed_data_dir + 'ptm_coordinates.csv',index_col = 0,
+                                                dtype = {'Source of PTM': str, 'Chromosome/scaffold name': str, 'Gene Location':int,
+                                                'Ragged': str})
+        else:
+            self.ptm_coordinates = None
+            
         if os.path.exists(config.processed_data_dir + 'alternative_ptms.csv'):
             print('Loading information on PTMs on alternative proteins')
-            self.alternative_ptms = pd.read_csv(config.processed_data_dir + 'alternative_ptms.csv')
+            self.alternative_ptms = pd.read_csv(config.processed_data_dir + 'alternative_ptms.csv', dtype = {'Exon ID (Alternative)':str, 'Chromosome/scaffold name': str, 'Ragged':str, 'Genomic Coordinates':str, 'Second Exon': str, 'Alternative Residue': str, 'Protein':str})
         else:
             self.alternative_ptms = None
+            
+        self.isoform_ptms = None
             
 def explode_PTMinfo(ptm_info, explode_cols = ['Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon Rank']):
     exploded_ptms = ptm_info.copy()
