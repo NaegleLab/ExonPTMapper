@@ -12,12 +12,12 @@ from Bio import SeqIO
 from ExonPTMapper import utility
 #import swifter
 
-#where package will look for data files, update these lines as needed
-
-api_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research'
-ps_data_dir = 'C:\\Users\Sam\OneDrive\Documents\GradSchool\Research\ProteomeScoutAPI\proteomescout_mammalia_20220131\data.tsv'
-source_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_August112023/ensembl_data/'
-processed_data_dir = 'C://Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data_August112023/processed_data_dir/'
+#update these lines as needed
+api_dir = './'
+ps_data_dir = './ProteomeScoutAPI/proteomescout_mammalia_20220131/data.tsv'
+source_data_dir = './ensembl_data/'
+processed_data_dir = './processed_data_dir/'
+translator_file = 'uniprot_translator.csv'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
 #initialize logger
