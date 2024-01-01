@@ -87,8 +87,8 @@ def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_
 
     #check to make sure same information is found in each dataframe
 
-    if exons['Transcript stable ID'].nunique() == transcripts.shape[0] and transcripts.shape[0] == genes['Transcript stable ID'].nunique():
-        logger.warning('Different number of transcripts found in exon, transcript, and gene dataframe. This may be due to transcripts being filtered out due to missing information. Proceed with caution.')
+    if exons['Transcript stable ID'].nunique() == transcripts.shape[0]:
+        logger.warning('Different number of transcripts found in exon and transcript dataframe. This may be due to transcripts being filtered out due to missing information. Proceed with caution.')
 
     logger.info('Exon, transcript, and gene information saved in processed data directory. A total of {} genes, {} transcripts, and {} exons were downloaded.'.format(genes.shape[0], transcripts.shape[0], exons['Exon stable ID'].nunique()))
     
@@ -344,17 +344,18 @@ def getProteinInfo(transcripts, genes):
     proteins = config.translator[config.translator['Uniprot Canonical'] == 'Canonical']
     proteins = proteins[['UniProtKB/Swiss-Prot ID','Transcript stable ID']].drop_duplicates().copy()
     #aggregate information along unique UniProt IDs
-    proteins = proteins.groupby('UniProtKB/Swiss-Prot ID').agg(';'.join)
-    proteins.columns = ['Canonical Transcripts']
+    proteins = proteins.groupby('UniProtKB/Swiss-Prot ID')['Transcript stable ID'].apply(lambda x: ';'.join(np.unique(x)))
+    proteins.name = 'Canonical Transcripts'
+    proteins = proteins.to_frame()
 
     #repeat above process but for alternative UniProt isoforms: get transcripts and number of isoforms
     variants = config.translator[config.translator['Uniprot Canonical'] == 'Alternative']
     variants = variants[['UniProtKB/Swiss-Prot ID', 'Transcript stable ID']].drop_duplicates()
     variants_grouped = variants.groupby('UniProtKB/Swiss-Prot ID')
-    num_variants = variants_grouped.count() + 1
-    num_variants.columns = ['Number of Uniprot Isoforms']
-    variant_trans = variants_grouped.agg(';'.join)
-    variant_trans.columns = ['Alternative Transcripts (Uniprot Isoforms)']
+    num_variants = variants_grouped.size() + 1
+    num_variants.name = 'Number of Uniprot Isoforms'
+    variant_trans = variants_grouped['Transcript stable ID'].apply(lambda x: ';'.join(np.unique(x)))
+    variant_trans.name = 'Alternative Transcripts (Uniprot Isoforms)'
 
     #add available canonical transcripts with matching uniprot sequence (check if transcript is found in config.available_transcripts list)
     if config.available_transcripts is not None:
@@ -405,7 +406,7 @@ def getProteinInfo(transcripts, genes):
     prot_genes = prot_genes.explode().reset_index()
 
     #grab all transcripts associated with the gene, that are not associated with the canonical uniprot protein
-    alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(';'.join).reset_index()
+    alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(lambda x: ';'.join(np.unique(x))).reset_index()
     prot_genes = pd.merge(prot_genes,alt_transcripts, on = 'Gene stable ID', how = 'left')
 
     #grab genes for which there are multiple uniprot proteins associated with it, add to prot_genes info
