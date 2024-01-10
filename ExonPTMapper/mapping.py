@@ -131,7 +131,7 @@ class PTM_mapper:
                 #convert columns to correct type
                 self.ptm_info['PTM Location (AA)'] = self.ptm_info['PTM Location (AA)'].astype(int)
             else:
-                self.ptm_info['PTM']+'_'+self.ptm_info['Residue']+self.ptm_info['PTM Location (AA)']
+                self.ptm_info['PTM']=self.ptm_info['Protein']+'_'+self.ptm_info['Residue']+self.ptm_info['PTM Location (AA)']
                 self.ptm_info['PTM Location (AA)'] = self.ptm_info['PTM Location (AA)'].astype(int)
                 self.ptm_info = self.ptm_info.drop_duplicates()
         else:
@@ -594,7 +594,8 @@ class PTM_mapper:
         flank_seq: str
             flanking sequence around the ptm of interest
         """
-
+        #force position to int
+        pos = int(pos)
         #get protein sequence
         protein_sequence = self.transcripts.loc[transcript, 'Amino Acid Sequence']
         #check if ptm is at the start or end of protein, which will alter how flanking sequence is extracted
@@ -1016,7 +1017,7 @@ class PTM_mapper:
             alt_ptms = None
             i = 1
             for index,ptm in tqdm(self.ptm_coordinates.iterrows(), total = self.ptm_coordinates.shape[0]):
-                ptm_exons = self.projectPTMs_toExons(ptm, trim_exons = trim_exons)
+                ptm_exons = self.projectPTM_toExons(ptm, trim_exons = trim_exons)
                 #check to make sure PTM was mapped to an alternative exon. If it was, add to alternative dataframe
                 if ptm_exons is not None:
                     if alt_ptms is None:
@@ -1041,7 +1042,7 @@ class PTM_mapper:
         #explode so that each alternative transcript is on its own row
         alternative['Alternative Transcripts (All)'] = alternative['Alternative Transcripts (All)'].apply(lambda x: x.split(';'))
         alternative = alternative.explode('Alternative Transcripts (All)').reset_index()
-        alternative = alternative[['UniProtKB/Swiss-Prot ID', 'Alternative Transcripts (All)']]
+        alternative = alternative[['UniProtKB/Swiss-Prot ID', 'Alternative Transcripts (All)']].drop_duplicates()
         #limit to transcripts that were analyzed during the mapping process
         alternative = alternative[alternative['Alternative Transcripts (All)'].isin(available_transcripts)]
         alternative = alternative.rename({'UniProtKB/Swiss-Prot ID':'Protein', 'Alternative Transcripts (All)':'Transcript stable ID'}, axis = 1)
@@ -1055,7 +1056,7 @@ class PTM_mapper:
         potential_ptm_isoform_labels = alternative['Transcript stable ID'] + '_' + alternative['Source of PTM']
         mapped_ptm_isoform_labels = alt_ptms['Transcript stable ID'] + '_' + alt_ptms['Source of PTM']
         missing = alternative[~potential_ptm_isoform_labels.isin(mapped_ptm_isoform_labels)]
-        missing = missing.rename({'Transcripts':'Transcript stable ID','Exon stable ID': 'Exon ID (Canonical)', 'PTM':'Source of PTM', 'Residue':'Canonical Residue'}, axis = 1)
+        missing = missing.rename({'Transcripts':'Transcript stable ID','Exon stable ID': 'Source Exons', 'PTM':'Source of PTM', 'Residue':'Canonical Residue'}, axis = 1)
         missing = missing.drop('Protein', axis = 1)
         #add genes
         missing = missing.merge(self.transcripts['Gene stable ID'].reset_index(), on = 'Transcript stable ID', how = 'left')
@@ -1063,6 +1064,8 @@ class PTM_mapper:
         missing = missing.merge(self.genes[['Chromosome/scaffold name', 'Strand']].reset_index(), on = 'Gene stable ID', how = 'left')
         alt_ptms = pd.concat([alt_ptms, missing])
         
+        #remove duplicates caused during merging process (should have all removed by now, but just in case)
+        alt_ptms = alt_ptms.drop_duplicates()
        
         ####### Now that all PTM information has been mapped to alternative transcripts, annotate with the result of the mapping process #######
         #rename columns
@@ -1326,12 +1329,11 @@ class PTM_mapper:
         splice_events_df = splice_events_df[['Exon ID (Canonical)', 'Exon ID (Alternative)', 'Alternative Transcript', 'Event Type']].drop_duplicates()
         alternative_ptms = self.alternative_ptms.copy()
 
-        #remove alternative exon IDs (will be replaced by splice event column)
-        alternative_ptms = alternative_ptms.drop('Exon ID (Alternative)', axis = 1)
+
         #separate each exon into its own row, and merge with splice event information
         alternative_ptms['Exon ID (Canonical)'] = alternative_ptms['Exon ID (Canonical)'].apply(lambda x: x.split(';'))
         alternative_ptms = alternative_ptms.explode('Exon ID (Canonical)').drop_duplicates()
-        alternative_ptms = alternative_ptms.merge(splice_events_df, on = ['Exon ID (Canonical)', 'Alternative Transcript'], how = 'inner')
+        alternative_ptms = alternative_ptms.merge(splice_events_df, on = ['Exon ID (Canonical)', 'Alternative Transcript', 'Exon ID (Alternative)'], how = 'left')
         
         
         exploded_ptms = self.explode_PTMinfo()
@@ -1396,7 +1398,7 @@ class PTM_mapper:
         alternative_ptms = alternative_ptms.drop_duplicates()
         cols = [col for col in alternative_ptms.columns if col != 'Event Type' and col != 'Exon ID (Canonical)']
         alternative_ptms = alternative_ptms.replace(np.nan, 'nan')
-        alternative_ptms = alternative_ptms.groupby(cols).agg(lambda x: ';'.join(np.unique(x))).reset_index()
+        alternative_ptms = alternative_ptms.groupby(cols).agg(lambda x: ';'.join(np.unique([y for y in x if y != 'nan']))).reset_index()
         alternative_ptms = alternative_ptms.replace('nan', np.nan)
 
         #make sure alternative ptm dataframe is the same size as before
@@ -2019,7 +2021,7 @@ def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fna
         
     #get PTMs associated with canonical proteins from UniProt with matching transcripts in Ensembl
     if mapper.ptm_info is None or restart_mapping:
-        mapper.findAllPTMs(collapse = False)
+        mapper.findAllPTMs(collapse = True)
         print('saving\n')
         mapper.ptm_info.to_csv(config.processed_data_dir + 'ptm_info.csv')
         
@@ -2049,7 +2051,7 @@ def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fna
     if mapper.alternative_ptms is None:
         print('Mapping PTM sites onto alternative isoforms')
         logger.info('Mapping PTM sites onto alternative isoforms')
-        mapper.mapPTMsToAlternativeExons()
+        mapper.projectPTMs_toAlternativeExons()
         mapper.alternative_ptms.to_csv(config.processed_data_dir + 'alternative_ptms.csv', index = False)
         print('saving\n')
    
