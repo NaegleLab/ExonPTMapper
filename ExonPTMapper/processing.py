@@ -87,8 +87,8 @@ def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_
 
     #check to make sure same information is found in each dataframe
 
-    if exons['Transcript stable ID'].nunique() == transcripts.shape[0] and transcripts.shape[0] == genes['Transcript stable ID'].nunique():
-        logger.warning('Different number of transcripts found in exon, transcript, and gene dataframe. This may be due to transcripts being filtered out due to missing information. Proceed with caution.')
+    if exons['Transcript stable ID'].nunique() == transcripts.shape[0]:
+        logger.warning('Different number of transcripts found in exon and transcript dataframe. This may be due to transcripts being filtered out due to missing information. Proceed with caution.')
 
     logger.info('Exon, transcript, and gene information saved in processed data directory. A total of {} genes, {} transcripts, and {} exons were downloaded.'.format(genes.shape[0], transcripts.shape[0], exons['Exon stable ID'].nunique()))
     

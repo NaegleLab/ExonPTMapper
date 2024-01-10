@@ -847,7 +847,7 @@ class PTM_mapper:
             ptm_exons['Source Exons'] = ptm['Source Exons']
             ptm_exons['Source of PTM'] = ptm['Source of PTM']
             ptm_exons['Canonical Residue'] = ptm['Residue']
-            ptm_exons['Modifications'] = ptm['Modifications']
+            ptm_exons['Modification'] = ptm['Modification']
             
 
             #check if ptm is at the boundary (ragged site)
@@ -947,7 +947,7 @@ class PTM_mapper:
             second_ptm_exons = second_ptm_exons.rename({'Exon stable ID': 'Second Exon'}, axis = 1)
             second_ptm_exons['Source Exons'] = ptm['Source Exons']
             second_ptm_exons['Source of PTM'] = ptm['Source of PTM']
-            second_ptm_exons['Modifications'] = ptm['Modifications']
+            second_ptm_exons['Modification'] = ptm['Modification']
             second_ptm_exons['Ragged'] = True
             second_ptm_exons['Ragged'] = second_ptm_exons['Ragged'].astype(str)
             ptm_exons = pd.concat([ptm_exons, second_ptm_exons])
@@ -1271,7 +1271,7 @@ class PTM_mapper:
             res = self.isoform_ptms.copy()
         else:
             res = self.alternative_ptms.copy()
-        for i in tqdm.tqdm(res.index):
+        for i in tqdm(res.index):
             #check if alt flanking seq exists
             alt_frag = res.loc[i, 'Tryptic Fragment']
             #check if flank sequence exists/was found and save
