@@ -47,7 +47,7 @@ class PTM_mapper:
         """ 
         self.load_PTMmapper(from_pickle = from_pickle)
 
-    def find_ptms(self, uniprot_id):
+    def find_ptms(self, uniprot_id, phosphositeplus_data = None):
         """
         Given a uniprot ID, find all PTMs present in the protein and save to dataframe
         
@@ -64,8 +64,14 @@ class PTM_mapper:
         """
         gene_id = self.proteins.loc[uniprot_id, 'Gene stable IDs']
         transcript_id = self.proteins.loc[uniprot_id, 'Matched Canonical Transcripts']
-        ptms = config.ps_api.get_PTMs(uniprot_id)
-        
+        ptms_pscout = config.ps_api.get_PTMs(uniprot_id)
+        #if phosphosite plus file provided use to supplement PTMs
+        if phosphositeplus_data is None:
+            ptms = ptms_pscout
+        else:
+            ptms_psp = utility.get_PTMs_PhosphoSitePlus(uniprot_id, phosphositeplus_data)
+            ptms = np.unique(ptms_pscout + ptms_psp)
+
         #extract ptm position
         if isinstance(ptms, int):
             ptm_df = None
@@ -75,13 +81,14 @@ class PTM_mapper:
             ptm_df.insert(0, 'Protein', uniprot_id)
             ptm_df.insert(0, 'Transcripts', transcript_id)
             ptm_df.insert(0, 'Genes', gene_id)
+            ptm_df.insert(0, 'Gene name', self.genes.loc[gene_id, 'Gene name'])
             #ptm_df.index = ptm_df['Protein']+'_'+ptm_df['Residue']+ptm_df['PTM Location (AA)']
        
         return ptm_df
                
 
         
-    def findAllPTMs(self, collapse = True, PROCESSES = 1):
+    def findAllPTMs(self, phosphositeplus_file = None, collapse = True, PROCESSES = 1):
         """
         Run find_ptms() for all proteins with available matched transcripts, save in ptm_info dataframe.
 
@@ -423,20 +430,23 @@ class PTM_mapper:
         print('Constructing ptm coordinates dataframe')
         logger.info('Constructing ptm coordinates dataframe')
         #save new dataframe which will be trimmed version of ptm info with each row containing a PTM mapped to unique genomic coordinates
-        ptm_coordinates = ptm_info[['Genomic Coordinates', 'PTM','Residue', 'Modification', 'Chromosome/scaffold name', 'Strand','Gene Location (NC)', 'Ragged', 'Ragged Genomic Location', 'Exon stable ID']].copy()
+        ptm_coordinates = ptm_info[['Genomic Coordinates', 'PTM','Residue', 'Modification', 'Chromosome/scaffold name', 'Strand','Gene Location (NC)', 'Ragged', 'Ragged Genomic Location', 'Exon stable ID', 'Gene name']].copy()
         ptm_coordinates = ptm_coordinates.dropna(subset = 'Gene Location (NC)')
         ptm_coordinates = ptm_coordinates.drop_duplicates()
         ptm_coordinates = ptm_coordinates.astype({'Gene Location (NC)': int, 'Strand':int, 'Ragged':bool})
+        
+
 
         #group modifications for the same ptm in the same row
         grouped = ptm_coordinates.groupby(['Genomic Coordinates', 'Chromosome/scaffold name', 'Residue', 'Strand', 'Gene Location (NC)', 'Ragged'])
-        ptm_coordinates = pd.concat([grouped['PTM'].agg(lambda x: ';'.join(np.unique(x))), grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(lambda x: ';'.join(np.unique(x))), grouped['Exon stable ID'].agg(lambda x: ';'.join(np.unique(x)))], axis = 1)
+        ptm_coordinates = pd.concat([grouped['PTM'].agg(lambda x: ';'.join(np.unique(x))), grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(lambda x: ';'.join(np.unique(x))), grouped['Exon stable ID'].agg(lambda x: ';'.join(np.unique(x))), grouped['Gene name'].agg(lambda x: ';'.join(np.unique(x)))], axis = 1)
         ptm_coordinates = ptm_coordinates.reset_index()
         ptm_coordinates = ptm_coordinates.rename({'PTM':'Source of PTM', 'Exon stable ID': 'Source Exons'}, axis = 1)
 
         #make genomic coordinates the index of dataframe
         ptm_coordinates.index = ptm_coordinates['Genomic Coordinates']
         ptm_coordinates = ptm_coordinates.drop('Genomic Coordinates', axis = 1)
+
 
         #get coordinates in the hg19 version of ensembl using hg38 information using pyliftover
         hg19_coords = []
@@ -1837,7 +1847,7 @@ def convertToHG19(hg38_location, chromosome, strand, liftover_object = None):
         genomic coordinates in hg19 version of Ensembl
     """
     if liftover_object is None:
-        liftover_object = pyliftover('hg19','hg38')
+        liftover_object = pyliftover('hg38','hg19')
     
     if strand == 1:
         strand = '+'
@@ -1926,6 +1936,7 @@ def getGapMaps(aln, exon_id, reverse = False):
     else:
         align_map = gap_alignment.gap_maps()[0]
     return align_map
+
     
 
 def run_mapping(restart_all = False, restart_mapping = False, exon_sequences_fname = 'exon_sequences.fasta.gz',

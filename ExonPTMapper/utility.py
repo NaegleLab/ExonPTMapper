@@ -244,6 +244,46 @@ def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1, return_resi
         return frame, residue, aa_pos
     else:
         return frame
+
+def get_PTMs_PhosphoSitePlus(uniprot_ID, phosphosite):
+    """
+    Temporary function to bolster data with new phosphositeplus data. Get PTMs for a given Uniprot ID from the PhosphoSitePlus data. You must have created
+    the data file from the PhosphoSitePlus using convert_pSiteDataFiles (taken from https://github.com/NaegleLab/CoDIAC/blob/main/CoDIAC/PhosphoSitePlus_Tools.py).
+
+    Parameters
+    ----------
+    uniprot_ID : str
+        Uniprot ID for the protein of interest
+    phosphositeplus: str
+        Processed phosphositeplus data to extract ptms
+    
+    Returns
+    -------
+    PTMs : tuples
+        Returns a list of tuples of modifications
+        [(position, residue, modification-type),...,]
+        
+        Returns -1 if unable to find the ID
+
+        Returns [] (empty list) if no modifications  
+    
+    """
+    if uniprot_ID in phosphosite.index:
+        mod_str = phosphosite.loc[uniprot_ID, 'modifications']
+        if mod_str == 'nan':
+            return []
+        else:
+            mod_list = mod_str.split(';')
+            PTMs = []
+            for mod in mod_list:
+                pos, mod_type = mod.split('-')
+                aa = pos[0]
+                PTMs.append((aa, pos[1:], mod_type))
+            return PTMs
+    else:
+        print("ERROR: %s not found in PhosphositePlus data"%(uniprot_ID))
+        return '-1'
+
     
     
 codon_dict = {'GCA':'A','GCG': 'A','GCC':'A','GCT':'A',
