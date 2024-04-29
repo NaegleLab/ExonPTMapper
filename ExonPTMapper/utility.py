@@ -369,7 +369,7 @@ def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1, return_resi
     else:
         return frame
 
-def get_PTMs_PhosphoSitePlus(uniprot_ID, phosphosite):
+def get_PTMs_PhosphoSitePlus(uniprot_ID, phosphosite, isoform_type = 'Canonical'):
     """
     Temporary function to bolster data with new phosphositeplus data. Get PTMs for a given Uniprot ID from the PhosphoSitePlus data. You must have created
     the data file from the PhosphoSitePlus using convert_pSiteDataFiles (taken from https://github.com/NaegleLab/CoDIAC/blob/main/CoDIAC/PhosphoSitePlus_Tools.py).
@@ -380,6 +380,8 @@ def get_PTMs_PhosphoSitePlus(uniprot_ID, phosphosite):
         Uniprot ID for the protein of interest
     phosphositeplus: str
         Processed phosphositeplus data to extract ptms
+    isoform_type: str
+        Type of isoform with PTMs associated with it. If canonical, check for PTMs using the base UniProt ID. Otherwise only use the isoform id
     
     Returns
     -------
@@ -392,27 +394,33 @@ def get_PTMs_PhosphoSitePlus(uniprot_ID, phosphosite):
         Returns [] (empty list) if no modifications  
     
     """
+    #check for uniprot id in index of dataframe
     if uniprot_ID in phosphosite.index:
         mod_str = phosphosite.loc[uniprot_ID, 'modifications']
-        if isinstance(mod_str, pd.Series):
-            mod_str = mod_str.unique()
-            if len(mod_str) > 1:
-                raise ValueError("Multiple modifications found for %s"%(uniprot_ID))
-            else:
-                mod_str = mod_str[0]
-
-        if mod_str != mod_str:
-            return []
-        else:
-            mod_list = mod_str.split(';')
-            PTMs = []
-            for mod in mod_list:
-                pos, mod_type = mod.split('-', 1)
-                aa = pos[0]
-                PTMs.append((pos[1:], aa, mod_type))
-            return PTMs
+    elif isoform_type == 'Canonical' and  uniprot_ID.split('-')[0] in phosphosite.index:
+        mod_str = phosphosite.loc[uniprot_ID.split('-')[0], 'modifications']
     else:
         return -1
+
+    #check for multiple entries for the same protein (if there are multiple remove)
+    if isinstance(mod_str, pd.Series):
+        mod_str = mod_str.unique()
+        if len(mod_str) > 1:
+            raise ValueError("Multiple modifications found for %s"%(uniprot_ID))
+        else:
+            mod_str = mod_str[0]
+
+    #extract PTMs if any identified
+    if mod_str != mod_str:
+        return -1
+    else:
+        mod_list = mod_str.split(';')
+        PTMs = []
+        for mod in mod_list:
+            pos, mod_type = mod.split('-', 1)
+            aa = pos[0]
+            PTMs.append((pos[1:], aa, mod_type))
+        return PTMs
 
 def get_sequence_PhosphoSitePlus(uniprot_ID, phosphosite):
     """
@@ -507,7 +515,21 @@ def join_except_self(x):
     """
     return ';'.join([i for idx, i in enumerate(x) if idx != x.name and i == i])
 
-    
+def join_unique_entries(x):
+    """
+    For use with groupby, combines all unique entries separated by ';', removing any NaN entries
+    """
+    #check if only nan entries
+    if all(i != i for i in x):
+        return np.nan
+    elif any(';' in i for i in x if i == i): #check if ';' already in entry, if so, split and remove any NaN entries
+        split_list = [i.split(';') for i in x if i == i]
+        #split entries in list by ';' and flatten list
+        flat_list = [item for sublist in split_list for item in sublist]
+        return ';'.join(set(flat_list))
+    else:
+        entry_list = [i for i in x if i == i]
+        return ';'.join(set(entry_list))
     
 codon_dict = {'GCA':'A','GCG': 'A','GCC':'A','GCT':'A',
               'TGT':'C','TGC':'C',
