@@ -61,8 +61,7 @@ def download_translator(logger):
     #load ID data that relates Ensembl to UniProt
     translator = dataset.query(attributes=['ensembl_gene_id','external_gene_name', 'ensembl_transcript_id',
                                        'uniprotswissprot', 'uniprot_isoform'],
-             filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding',
-             'chromosome_name':chromosomes})
+             filters = {'transcript_biotype':'protein_coding','chromosome_name':chromosomes})
     #identify whether transcript is associated with canonical uniprot id
     #translator['Uniprot Canonical'] = translator.apply(is_canonical, axis =1)
     #indicate whether listed isoforms are canonical, alternative or unannotated in uniprot
@@ -508,28 +507,57 @@ def get_canonical_isoID(alternative_products, accession):
         canonical_isoid = accession + '-1'
     return canonical_isoid
 
-
-def join_except_self(x):
-    """
-    For use with groupby and transform, combines all entries with the same information except for the current row
-    """
-    return ';'.join([i for idx, i in enumerate(x) if idx != x.name and i == i])
-
-def join_unique_entries(x):
+def join_unique_entries(x, sep = ';'):
     """
     For use with groupby, combines all unique entries separated by ';', removing any NaN entries
     """
     #check if only nan entries
     if all(i != i for i in x):
         return np.nan
-    elif any(';' in i for i in x if i == i): #check if ';' already in entry, if so, split and remove any NaN entries
-        split_list = [i.split(';') for i in x if i == i]
+    elif any(sep in i for i in x if i == i): #check if ';' already in entry, if so, split and remove any NaN entries
+        split_list = [i.split(sep) for i in x if i == i]
         #split entries in list by ';' and flatten list
         flat_list = [item for sublist in split_list for item in sublist]
-        return ';'.join(set(flat_list))
+        return sep.join(set(flat_list))
     else:
         entry_list = [i for i in x if i == i]
-        return ';'.join(set(entry_list))
+        return sep.join(set(entry_list))
+
+def join_except_self(df, group_col, value_col, new_col, sep = ';'):
+    """
+    For a given dataframe, combines all entries with the same information except for the current row, adds that to the new_col label, and returns the updated dataframe
+    
+    Parameters
+    ----------
+    df: pandas DataFrame
+        The dataframe to be updated
+    group_col: str
+        The column to group the dataframe by
+    value_col: str
+        The column to be combined
+    new_col: str
+        The new column to be added to the dataframe with the grouped information (excluding the info from the current row)
+
+    Returns
+    -------
+    df: pandas DataFrame
+        updated dataframe with new col labeled with new_col value
+    """
+    df = df.copy()
+    df[new_col] = df.groupby(group_col)[value_col].transform(join_unique_entries, sep)
+
+    #go through each row and remove the value(s) in the new column that is in the value column
+    new_values = []
+    for i, row in df.iterrows():
+        if row[new_col] == row[new_col] and row[value_col] == row[value_col]:
+            new_values.append(';'.join([trans for trans in row[new_col].split(sep) if trans not in row[value_col].split(sep)]))
+        elif row[value_col] != row[value_col]:
+            new_values.append(row[new_col])
+        else:
+            new_values.append(np.nan)
+    df[new_col] = new_values
+    return df
+
     
 codon_dict = {'GCA':'A','GCG': 'A','GCC':'A','GCT':'A',
               'TGT':'C','TGC':'C',

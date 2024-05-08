@@ -10,19 +10,18 @@ import logging
 import datetime
 
 #bio packages
-import pybiomart
-from Bio import SeqIO
 from ExonPTMapper import utility
 
 
+package_dir = os.path.dirname(os.path.abspath(__file__))
+modification_conversion = pd.read_csv(package_dir + '/../Resource_Files/modification_conversion.csv')
 
 
 #update these lines as needed
-api_dir = './'
+api_dir = 'C:/Users/Sam/OneDrive/Documents/GradSchool/Research/'
 ps_data_dir = api_dir + '/ProteomeScoutAPI/proteomescout_mammalia_20220131/data.tsv'
-source_data_dir = '/source_data/'
-processed_data_dir = '/processed_data_dir/'
-translator_file = 'uniprot_translator.csv'
+source_data_dir = 'C:/Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data/April18_2024/source_data/'
+processed_data_dir = 'C:/Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data/April18_2024/processed_data_dir/'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
 #initialize logger
@@ -84,7 +83,7 @@ else:
 
 #load uniprot translator dataframe, process if need be
 print('Downloading ID translator file')
-if os.path.isfile(processed_data_dir + 'translator.csv'):
+if os.path.isfile(source_data_dir + 'translator.csv'):
     translator = pd.read_csv(source_data_dir + 'translator.csv')
 else:
     logger.info('Translator file not found. Downloading from Database IDs of Ensembl, UniProt, PDB, CCDS, and Refseq via pybiomart.')
