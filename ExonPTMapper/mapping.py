@@ -426,7 +426,7 @@ class PTM_mapper:
         ptm_coordinates['UniProtKB Accession'] = ptm_coordinates['Source of PTM'].apply(lambda x: x.split(';'))
         ptm_coordinates['Residue'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: x[0].split('_')[1][0])
         ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: [ptm.split('_')[1][1:] for ptm in x if ptm.split('_')[0] in config.canonical_isoIDs.values()])
-        ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates['PTM Position in Canonical Isoform'].apply(lambda x: ';'.join(np.unique(x)) if len(x) > 0 else np.nan)
+        ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates['PTM Position in Canonical Isoform'].apply(lambda x: ';'.join(x) if len(x) > 0 else np.nan)
         ptm_coordinates['UniProtKB Accession'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: ';'.join(np.unique([ptm.split('-')[0] for ptm in x])))
 
 
