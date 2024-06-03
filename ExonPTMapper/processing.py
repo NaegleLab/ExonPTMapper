@@ -300,7 +300,7 @@ def getIsoformInfo(transcripts):
     isoforms = isoforms.reset_index().groupby(['Amino Acid Sequence', 'Gene stable ID'])['Transcript stable ID'].agg(';'.join).reset_index()
     
     #reduce translator for analysis
-    trim_translator = config.translator[['Gene name','Transcript stable ID', 'UniProtKB isoform ID', 'UniProt Isoform Type']].drop_duplicates()
+    trim_translator = config.translator[['Gene name','Gene stable ID','Transcript stable ID', 'UniProtKB isoform ID', 'UniProt Isoform Type']].drop_duplicates()
 
     #iterate through each grouped isoform, if it has uniprot id, use that, else make up new name that follows this format 'ENS_{Gene Name}_{Isoform_num}'
     isoform_id = []     #id (or ids if multiple uniprot ids are matching those transcripts)
@@ -312,7 +312,13 @@ def getIsoformInfo(transcripts):
         tmp = trim_translator[trim_translator['Transcript stable ID'].isin(row['Transcript stable ID'].split(';'))]
         #check if isoform has uniprot id associated with any of the transcripts, if not, create new isoform id
         if tmp['UniProtKB isoform ID'].isna().all():
-            gene_name = tmp['Gene name'].unique()[0]
+            #grab non nan gene names
+            for i, row in tmp.iterrows():
+                if row['Gene name'] == row['Gene name']:
+                    gene_name = row['Gene name']
+                    break
+                gene_name = row['Gene stable ID'] #set as ensembl id if no gene name is available
+            gene_name = tmp['Gene name'].unique()
             isoform_numbers[gene_name] = isoform_numbers[gene_name] + 1
             isoform_id.append(f'ENS-{gene_name}-{isoform_numbers[gene_name]}')
             isoform_type.append('Alternative')
@@ -342,7 +348,7 @@ def getIsoformInfo(transcripts):
     logger.info('Isoform dataframe created.')
     return isoforms
 
-def getProteinInfo(transcripts, genes, canonical_only = False):
+def getProteinInfo(genes, canonical_only = False):
     """
     Process translator dataframe so to get protein specific information (collapse protein isoforms into one row). Add context, including:
     1. Transcripts associated with the canonical uniprot protein
@@ -956,9 +962,9 @@ def get_gencode_seq(seq_align, transcripts):
     seq = []
     for i in seq_align.index:
         gen_id = seq_align.at[i,'Transcript stable ID']
-        try:
+        if gen_id in transcripts.index:
             seq.append(transcripts.loc[gen_id, 'Amino Acid Sequence'])
-        except KeyError:         
+        else:        
             seq.append(np.nan)
         
     return seq
