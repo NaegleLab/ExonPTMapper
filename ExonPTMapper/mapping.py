@@ -234,7 +234,7 @@ class PTM_mapper:
             results = pool.starmap(self.find_ptms_list, [(protein_data_split[i], collapse, phosphositeplus_data) for i in range(PROCESSES)])
 
             #extract info from run
-            ptm_info = pd.concat([res[0] for res in results])
+            self.ptm_info = pd.concat([res[0] for res in results])
             num_ptms_list = [res[1] for res in results]
             num_ptms = {}
             for item in num_ptms_list:
@@ -345,7 +345,9 @@ class PTM_mapper:
 
         
         #add gene info to ptm dataframe (which strand and chromosome ptm is located)
-        ptm_info = ptm_info.merge(self.genes[['Chromosome/scaffold name', 'Strand']], left_on = 'Genes', right_index = True)
+        gene_info = ptm_info.apply(lambda x: self.genes.loc[x['Genes'].split(';')[0], ['Chromosome/scaffold name', 'Strand']], axis = 1)
+        ptm_info = pd.concat([ptm_info, gene_info], axis = 1)
+        #ptm_info = ptm_info.merge(self.genes[['Chromosome/scaffold name', 'Strand']], left_on = 'Genes', right_index = True, how = 'left')
 
         #get genomic locatio of ptms and coordinates
         gene_loc = []
@@ -458,7 +460,7 @@ class PTM_mapper:
 
         #collapse into rows for unique ptms, with overlapping info seperated by ;
         ptm_info = ptm_info.astype(str)
-        ptm_info = ptm_info.groupby(['PTM','Protein', 'Residue', 'PTM Location (AA)', 'Modification']).agg(';'.join).reset_index()
+        ptm_info = ptm_info.groupby(['PTM','Gene name', 'Genes', 'Protein', 'Isoform Type', 'Residue', 'PTM Location (AA)', 'Modification', 'Modification Class', 'Sources']).agg(';'.join).reset_index()
 
         #add ptm label to index, remove as column
         ptm_info = ptm_info.set_index('PTM')
@@ -475,7 +477,7 @@ class PTM_mapper:
         self.ptm_coordinates[f'Gene Location ({to_type})'] = new_coords
 
             
-    def explode_PTMinfo(self, explode_cols = ['Genes', 'Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon rank in transcript']):
+    def explode_PTMinfo(self, explode_cols = ['Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon rank in transcript', 'Exon Location (AA)', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to N-terminal Splice Boundary (NC)']):
         """
         Expand the ptm_info dataframe into distinct rows for each transcript that the ptm is associated with. Resulting dataframe will have some rows referencing the same ptm, but with data associated with a specific transcript
 
@@ -1126,7 +1128,7 @@ class PTM_mapper:
         #get canonical PTM information to allow for comparison to alternative info
         #ptms = self.ptm_info.reset_index()[['PTM', 'Protein', 'PTM Location (AA)', 'Exon stable ID', 'Ragged', 'Modification', 'Residue']].drop_duplicates()
         #ptms = ptms.rename({'PTM':'Source of PTM','PTM Location (AA)':'Canonical Protein Location (AA)', 'Residue':'Canonical Residue'}, axis = 1)
-        ptms = self.ptm_coordinates[['Source of PTM', 'Residue', 'Modification', 'Modification Class']].copy()
+        ptms = self.ptm_coordinates[['Source Exons', 'Source of PTM', 'Residue', 'Modification', 'Modification Class']].copy()
         ptms = ptms.rename(columns = {'Residue':'Canonical Residue'})
         ptms['Protein'] = ptms['Source of PTM'].apply(lambda x: [i.split('_')[0] for i in x.split(';')])
         ptms = ptms.explode('Protein')
@@ -1137,12 +1139,15 @@ class PTM_mapper:
         potential_ptm_isoform_labels = prot_to_transcript['Transcript stable ID'] + '_' + prot_to_transcript['Source of PTM']
         mapped_ptm_isoform_labels = alt_ptms['Transcript stable ID'] + '_' + alt_ptms['Source of PTM']
         missing = prot_to_transcript[~potential_ptm_isoform_labels.isin(mapped_ptm_isoform_labels)]
-        missing = missing.rename({'Transcripts':'Transcript stable ID','Exon stable ID': 'Source Exons', 'PTM':'Source of PTM', 'Residue':'Canonical Residue'}, axis = 1)
+        missing = missing.rename({'Transcripts':'Transcript stable ID', 'PTM':'Source of PTM', 'Residue':'Canonical Residue'}, axis = 1)
         missing = missing.drop('Protein', axis = 1)
         #add genes
+        
         missing = missing.merge(self.transcripts['Gene stable ID'].reset_index(), on = 'Transcript stable ID', how = 'left')
         #add gene info
-        missing = missing.merge(self.genes[['Chromosome/scaffold name', 'Strand']].reset_index(), on = 'Gene stable ID', how = 'left')
+        gene_info = missing.apply(lambda x: self.genes.loc[x['Gene stable ID'].split(';')[0], ['Chromosome/scaffold name', 'Strand']], axis = 1)
+        missing = pd.concat([missing, gene_info], axis = 1)
+        #missing = missing.merge(self.genes[['Chromosome/scaffold name', 'Strand']].reset_index(), on = 'Gene stable ID', how = 'left')
         alt_ptms = pd.concat([alt_ptms, missing])
 
         #remove duplicates caused during merging process (should have all removed by now, but just in case)
@@ -1226,6 +1231,10 @@ class PTM_mapper:
             else:
                 alt_ptms = self.isoform_ptms.copy()
                 
+            #separate sourc of ptm information
+            alt_ptms['Source of PTM'] = alt_ptms['Source of PTM'].apply(lambda x: x.split(';'))
+            alt_ptms = alt_ptms.explode('Source of PTM')
+
             #get alternative isoforms for which the PTM is conserved (i.e. the PTM is present in the isoform and has residue data) or lost (i.e. the PTM is not present in the isoform)    
             conserved_transcripts = alt_ptms[alt_ptms['Mapping Result'] == 'Success'].groupby('Source of PTM')['Isoform ID'].apply(list)
             lost_transcripts = alt_ptms[alt_ptms['Mapping Result'] != 'Success'].groupby('Source of PTM')['Isoform ID'].apply(list)
@@ -1242,7 +1251,10 @@ class PTM_mapper:
                     alt_ptms = self.alternative_ptms[self.alternative_ptms['Alternative Transcript'].isin(transcript_subset)].copy()
                 else:
                     alt_ptms = self.alternative_ptms.copy()
-                    
+            #separate sourc of ptm information
+            alt_ptms['Source of PTM'] = alt_ptms['Source of PTM'].apply(lambda x: x.split(';'))
+            alt_ptms = alt_ptms.explode('Source of PTM')
+
             #get alternative isoforms for which the PTM is conserved (i.e. the PTM is present in the isoform and has residue data) or lost (i.e. the PTM is not present in the isoform)    
             conserved_transcripts = alt_ptms[alt_ptms['Mapping Result'] == 'Success'].groupby('Source of PTM')['Alternative Transcript'].apply(list)
             lost_transcripts = alt_ptms[alt_ptms['Mapping Result'] != 'Success'].groupby('Source of PTM')['Alternative Transcript'].apply(list)
@@ -1265,8 +1277,8 @@ class PTM_mapper:
         #for each PTM, calculate the fraction of transcripts/isoforms for which the PTM was found and is present in the isoform
         conservation_score = []
         for ptm in self.ptm_info.index:
-            num_conserved = self.ptm_info.loc[ptm,'Number of Conserved Isoforms']
-            num_lost = self.ptm_info.loc[ptm,'Number of Lost Isoforms']
+            num_conserved = num_conserved_transcripts[ptm] if ptm in num_conserved_transcripts else 0
+            num_lost = num_lost_transcripts[ptm] if ptm in num_lost_transcripts else 0
             #check if there are any conserved transcripts (or if not and is NaN)
             if num_conserved != num_conserved and num_lost == num_lost:
                 conservation_score.append(0)
@@ -1409,15 +1421,22 @@ class PTM_mapper:
         #extract only the necessary columns from splice_events_df
         splice_events_df = splice_events_df[['Exon ID (Canonical)', 'Exon ID (Alternative)', 'Alternative Transcript', 'Event Type']].drop_duplicates()
         alternative_ptms = self.alternative_ptms.copy()
+        if 'Exon ID (Alternative)' in alternative_ptms.columns:
+            alternative_ptms = alternative_ptms.drop(columns = 'Exon ID (Alternative)')
+
+        if 'Event Type' in alternative_ptms.columns:
+            alternative_ptms = alternative_ptms.drop(columns = 'Event Type')
 
 
         #separate each exon into its own row, and merge with splice event information
         alternative_ptms['Exon ID (Canonical)'] = alternative_ptms['Exon ID (Canonical)'].apply(lambda x: x.split(';'))
         alternative_ptms = alternative_ptms.explode('Exon ID (Canonical)').drop_duplicates()
-        alternative_ptms = alternative_ptms.merge(splice_events_df, on = ['Exon ID (Canonical)', 'Alternative Transcript', 'Exon ID (Alternative)'], how = 'left')
+        alternative_ptms = alternative_ptms.merge(splice_events_df, on = ['Exon ID (Canonical)', 'Alternative Transcript'], how = 'left')
         
         
+
         exploded_ptms = self.explode_PTMinfo()
+        exploded_ptms = exploded_ptms[exploded_ptms['Isoform Type'] == 'Canonical']
         #check PTMs in mutually exclusive exons to see if they might be conserved, add conservation data if so (PTM location in isoform, etc.)
         mxe_ptm_candidates = alternative_ptms[alternative_ptms['Event Type'] == 'Mutually Exclusive'].copy()
         alternative_ptms = alternative_ptms[alternative_ptms['Event Type'] != 'Mutually Exclusive']
@@ -1429,7 +1448,7 @@ class PTM_mapper:
                 
                 #get canonical exon info
                 canonical_exon_id = row['Exon ID (Canonical)']
-                ptm_info_of_interest = exploded_ptms.loc[(exploded_ptms['PTM'] == ptm) & (exploded_ptms['Exon stable ID'] == canonical_exon_id)].squeeze()
+                ptm_info_of_interest = exploded_ptms.loc[(exploded_ptms['PTM'].isin(ptm.split(';'))) & (exploded_ptms['Exon stable ID'] == canonical_exon_id)].iloc[0]
                 canonical_exon = self.exons[(self.exons['Exon stable ID'] == canonical_exon_id) & (self.exons['Transcript stable ID'] == ptm_info_of_interest['Transcripts'])].squeeze()
                 canonical_exon_sequence = Seq(canonical_exon['Exon AA Seq (Full Codon)'])
                 
@@ -1475,17 +1494,37 @@ class PTM_mapper:
         mxe_ptm_candidates['Mapping Result'] = mxe_ptm_candidates.apply(lambda x: 'Success' if x['Alternative Residue'] == x['Alternative Residue'] else 'Not Found', axis = 1)
         alternative_ptms = pd.concat([alternative_ptms, mxe_ptm_candidates])
         
+
+        #annotate alt ptms that are from transcripts associated with canonical isoform
+        canonical_transcripts = config.translator.loc[config.translator['UniProt Isoform Type'] == 'Canonical', 'Transcript stable ID'].unique()
+        alternative_ptms.loc[alternative_ptms['Alternative Transcript'].isin(canonical_transcripts), 'Event Type'] = 'Canonical'
+        alternative_ptms.loc[(alternative_ptms['Alternative Transcript'].isin(canonical_transcripts)), 'Exon ID (Alternative)'] = alternative_ptms.loc[(alternative_ptms['Alternative Transcript'].isin(canonical_transcripts)), 'Exon ID (Canonical)']
+
+
         #collapse into rows for matching event types and exon ids so that each PTM is now a unique row
         alternative_ptms = alternative_ptms.drop_duplicates()
-        cols = [col for col in alternative_ptms.columns if col != 'Event Type' and col != 'Exon ID (Canonical)']
-        alternative_ptms = alternative_ptms.replace(np.nan, 'nan')
-        alternative_ptms = alternative_ptms.groupby(cols).agg(lambda x: ';'.join(np.unique([y for y in x if y != 'nan']))).reset_index()
-        alternative_ptms = alternative_ptms.replace('nan', np.nan)
+        cols = [col for col in alternative_ptms.columns if col != 'Event Type' and col != 'Exon ID (Canonical)' and col != 'Exon ID (Alternative)']
+        #alternative_ptms = alternative_ptms.replace(np.nan, 'nan')
+        alternative_ptms = alternative_ptms.groupby(cols, dropna = False).agg(utility.join_entries).reset_index()
+        #alternative_ptms = alternative_ptms.replace('nan', np.nan)
+
+        conflicting_events = alternative_ptms[alternative_ptms.duplicated(subset = ['Gene stable ID', 'Alternative Transcript', 'Source of PTM', 'Genomic Coordinates'], keep = False)].sort_values(by = 'Source of PTM')
+
+        #if there are conflicting events, solve those conflicts
+        if conflicting_events.shape[0] >= 1:
+            #if on of events is successful, grab that one
+            if 'Success' in conflicting_events['Mapping Result'].values:
+                conflicting_events = conflicting_events[conflicting_events['Mapping Result'] == 'Success']
+            else:
+                conflicting_events = conflicting_events.iloc[0]
+
+            nonconflicting_events = alternative_ptms[~alternative_ptms.duplicated(subset = ['Gene stable ID', 'Alternative Transcript', 'Source of PTM', 'Genomic Coordinates'], keep = False)].sort_values(by = 'Source of PTM')
+            alternative_ptms = pd.concat([conflicting_events, nonconflicting_events])
 
         #make sure alternative ptm dataframe is the same size as before
         if alternative_ptms.shape[0] != original_size:
-            raise ValueError('Alternative PTM dataframe is not the same size as before. Something went wrong during processing, please make sure no duplicates or other errors exist in splice event or alternative ptm dataframe')
             logger.error('Failed to add splice event information to alternative ptm dataframe, due to unexpected change in dataframe size')
+            raise ValueError('Alternative PTM dataframe is not the same size as before. Something went wrong during processing, please make sure no duplicates or other errors exist in splice event or alternative ptm dataframe')
         else:
             self.alternative_ptms = alternative_ptms.copy()
             logger.info('Successfully added splice event information to alternative ptm dataframe')
@@ -1504,15 +1543,17 @@ class PTM_mapper:
         Updated alternative_ptms dataframe
         """
         logger.info('Adding additional context to alternative PTMs dataframe: see following log messages for details.')
-        if 'TRIFID Score' in self.transcripts.columns and 'TRIFID Score' not in self.alternative_ptms.columns:
-            logger.info('Adding TRIFID scores downloaded from APPRIS')
-            self.alternative_ptms = self.alternative_ptms.merge(self.transcripts['TRIFID Score'], right_index = True, left_on = 'Alternative Transcript', how = 'left')
-            
         if os.path.exists(config.processed_data_dir + 'splice_events.csv') and 'Event Type' not in self.alternative_ptms.columns:
             logger.info('Adding splice events responsible for any potential changes to PTMs')
             print('Adding splice events to alternative dataframes and checking MXE events for conserved PTMs')
             sevents = pd.read_csv(config.processed_data_dir + 'splice_events.csv')
             self.addSpliceEventsToAlternative(sevents)
+            
+
+        if 'TRIFID Score' in self.transcripts.columns and 'TRIFID Score' not in self.alternative_ptms.columns:
+            logger.info('Adding TRIFID scores downloaded from APPRIS')
+            self.alternative_ptms = self.alternative_ptms.merge(self.transcripts['TRIFID Score'], right_index = True, left_on = 'Alternative Transcript', how = 'left')
+
             
 
         print('Getting flanking sequences around PTMs in alternative isoforms')
