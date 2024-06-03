@@ -219,7 +219,7 @@ def convert_IDs(id_to_convert, from_type, to_type):
 #    return ans   
 
 
-def stringToBoolean(string):
+def stringToBoolean(string, null_value = False):
     """
     Convert string object to boolean. False, false, and No all indicate False boolean. True, true, and Yes all indicate True boolean. All other values return np.nan.
 
@@ -238,6 +238,8 @@ def stringToBoolean(string):
         return False
     elif string == 'True' or string == 'true' or string == 'Yes':
         return True
+    elif string != string:
+        return null_value
     else:
         return np.nan
 
@@ -514,14 +516,29 @@ def join_unique_entries(x, sep = ';'):
     #check if only nan entries
     if all(i != i for i in x):
         return np.nan
-    elif any(sep in i for i in x if i == i): #check if ';' already in entry, if so, split and remove any NaN entries
+    if any(sep in i for i in x if i == i): #check if ';' already in entry, if so, split and remove any NaN entries
         split_list = [i.split(sep) for i in x if i == i]
         #split entries in list by ';' and flatten list
         flat_list = [item for sublist in split_list for item in sublist]
         return sep.join(set(flat_list))
     else:
-        entry_list = [i for i in x if i == i]
+        entry_list = [str(i) for i in x if i == i]
         return sep.join(set(entry_list))
+
+def join_entries(x, sep = ';'):
+    #check if only nan entries
+    if all(i != i for i in x):
+        return np.nan
+
+    if any(sep in i for i in x if i == i): #check if ';' already in entry, if so, split and remove any NaN entries
+        split_list = [i.split(sep) for i in x if i == i]
+        #split entries in list by ';' and flatten list
+        flat_list = [item for sublist in split_list for item in sublist]
+        return sep.join(flat_list)
+
+    else:
+        entry_list = [str(i) for i in x if i == i]
+        return sep.join(entry_list)
 
 def join_except_self(df, group_col, value_col, new_col, sep = ';'):
     """
