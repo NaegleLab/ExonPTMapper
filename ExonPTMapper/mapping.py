@@ -1282,6 +1282,8 @@ class PTM_mapper:
             #check if there are any conserved transcripts (or if not and is NaN)
             if num_conserved != num_conserved and num_lost == num_lost:
                 conservation_score.append(0)
+            elif num_conserved == 0 and num_lost == 0:
+                conservation_score.append(1)
             elif num_conserved != num_conserved and num_lost != num_lost:
                 conservation_score.append(1)
             #check if any lost transcripts: if not replace NaN with 0 when calculating
