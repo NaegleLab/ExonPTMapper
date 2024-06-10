@@ -31,8 +31,8 @@ From ensembl, you will need to manually download the exon and coding sequences. 
 
 1. Go to [ensembl](https://useast.ensembl.org/index.html)
 2. Navigate to biomart tab
-3. Choose Ensembl Genes 107, then Human genes
-4. Under 'Filters', go the gene tab. Check the 'Transcript type' and select 'protein_coding'. Also restrict to the GENCODE Basic set.
+3. Choose latest Ensembl Genes version
+4. Under 'Filters', go the gene tab. Check the 'Transcript type' and select 'protein_coding'. 
 5. Navigate to attributes
 	1. For exon information, click sequences -> Exon sequences. Under header information, check 'Exon stable ID'. Call this file 'exon_sequences.fasta.gz'.
 	2. For coding sequences, click sequences -> Coding sequences. Call this file 'coding_sequences.fasta.gz'
