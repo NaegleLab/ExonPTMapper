@@ -46,10 +46,13 @@ def create_custom_codon_table():
     return custom_table
 
 
-def download_translator(logger):
+def download_translator(logger, canonical_isoIDs = None):
     """
     Download information from biomart to convert between database IDs
     """
+    if canonical_isoIDs is None:
+        canonical_isoIDs = config.canonical_isoIDs
+
     chromosomes = ['X', '20', '1', '6', '3', '7', '12', '11', '4', '17', '2', '16',
        '8', '19', '9', '13', '14', '5', '22', '10', 'Y', '18', '15', '21',
        'MT']
@@ -62,11 +65,10 @@ def download_translator(logger):
     translator = dataset.query(attributes=['ensembl_gene_id','external_gene_name', 'ensembl_transcript_id',
                                        'uniprotswissprot', 'uniprot_isoform'],
              filters = {'transcript_biotype':'protein_coding','chromosome_name':chromosomes})
-    #identify whether transcript is associated with canonical uniprot id
-    #translator['Uniprot Canonical'] = translator.apply(is_canonical, axis =1)
+
     #indicate whether listed isoforms are canonical, alternative or unannotated in uniprot
     translator["UniProt Isoform Type"] = np.nan
-    translator.loc[translator['UniProtKB isoform ID'].isin(config.canonical_isoIDs.values()), "UniProt Isoform Type"] = 'Canonical' #if annotated as canonical
+    translator.loc[translator['UniProtKB isoform ID'].isin(canonical_isoIDs.values()), "UniProt Isoform Type"] = 'Canonical' #if annotated as canonical
     translator.loc[(translator['UniProtKB isoform ID'].isna()) & (~translator['UniProtKB/Swiss-Prot ID'].isna()), 'UniProt Isoform Type'] = 'Canonical'  #if the only isoform
     translator.loc[(~translator['UniProtKB isoform ID'].isna()) & (translator["UniProt Isoform Type"].isna()), "UniProt Isoform Type"] = 'Alternative'   #if has isoform ID but is not identified as canonical
 
@@ -80,7 +82,7 @@ def download_translator(logger):
 
     #load additional ID data that relates Ensembl to external databases (PDB, RefSeq, CCSD)
     translator2 = dataset.query(attributes=['ensembl_gene_id','external_gene_name', 'ensembl_transcript_id', 'pdb','refseq_mrna', 'ccds'],
-             filters = {'biotype':'protein_coding','transcript_biotype':'protein_coding',
+             filters = {'transcript_biotype':'protein_coding',
              'chromosome_name':chromosomes})
     
     #merge two dataframes, drop any duplicates caused by merging
@@ -90,9 +92,7 @@ def download_translator(logger):
 
     return translator
 
-def download_translator_UniProt(logger):
-    #start up session for interfacting with rest api
-    pass
+
 
 def checkForTranslatorErrors(translator, logger = None):
     """
@@ -369,6 +369,9 @@ def checkFrame(exon, transcript, loc, loc_type = 'Gene', strand = 1, return_resi
         return frame, residue, aa_pos
     else:
         return frame
+    
+
+
 
 def get_PTMs_PhosphoSitePlus(uniprot_ID, phosphosite, isoform_type = 'Canonical'):
     """
@@ -423,7 +426,7 @@ def get_PTMs_PhosphoSitePlus(uniprot_ID, phosphosite, isoform_type = 'Canonical'
             PTMs.append((pos[1:], aa, mod_type))
         return PTMs
 
-def get_sequence_PhosphoSitePlus(uniprot_ID, phosphosite):
+def get_sequence_PhosphoSitePlus(uniprot_ID, phosphosite, isoform_type = 'Canonical'):
     """
     Get the sequence for a given Uniprot ID from the PhosphoSitePlus data. You must have created
     the data file from the PhosphoSitePlus using convert_pSiteDataFiles.
@@ -442,6 +445,12 @@ def get_sequence_PhosphoSitePlus(uniprot_ID, phosphosite):
     """
     if uniprot_ID in phosphosite.index:
         seq = phosphosite.loc[uniprot_ID, 'sequence']
+        if isinstance(seq, str):
+            return seq
+        else:
+            return -1
+    elif uniprot_ID.split('-')[0] in phosphosite.index and isoform_type == 'Canonical':
+        seq = phosphosite.loc[uniprot_ID.split('-')[0], 'sequence']
         if isinstance(seq, str):
             return seq
         else:

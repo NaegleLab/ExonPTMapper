@@ -318,7 +318,7 @@ def getIsoformInfo(transcripts):
                     gene_name = row['Gene name']
                     break
                 gene_name = row['Gene stable ID'] #set as ensembl id if no gene name is available
-            gene_name = tmp['Gene name'].unique()
+            
             isoform_numbers[gene_name] = isoform_numbers[gene_name] + 1
             isoform_id.append(f'ENS-{gene_name}-{isoform_numbers[gene_name]}')
             isoform_type.append('Alternative')
@@ -335,11 +335,7 @@ def getIsoformInfo(transcripts):
                 isoform_type.append('Multiple')
                 mislabeled_isoforms.append('Multiple Isoforms')
                 logger.warning(f"{iso_id[0].split('-')[0]} caused error due to being associated with multiple different UniProt isoform ids")
-        #else: #otherwise, only one isoform for protein, grab that entry
-        #    print('Unexcpected fall through (remove once checked)')
-        #    tmp = tmp.dropna(subset = 'UniProtKB/Swiss-Prot ID')
-        #    isoform_id.append(tmp['UniProtKB/Swiss-Prot ID'].unique()[0] + '-1')
-        #    isoform_type.append('Canonical')
+
     isoforms['Isoform ID'] = isoform_id
     isoforms['Isoform Type'] = isoform_type
     #get length of each isoform
@@ -395,10 +391,6 @@ def getProteinInfo(genes, canonical_only = False):
     #set isoform id as index
     proteins = proteins.set_index('UniProtKB isoform ID')
 
-    #grab Ensembl gene ids associated with each uniprot protein, explode on each gene id
-    #prot_genes = config.translator.groupby('UniProtKB isoform ID')['Gene stable ID'].apply(set)
-    #proteins['Gene stable ID'] = prot_genes.apply(';'.join)
-    #prot_genes = prot_genes.explode().reset_index()
 
 
     #add available canonical transcripts with matching uniprot sequence (check if transcript is found in config.available_transcripts list)
@@ -409,11 +401,13 @@ def getProteinInfo(genes, canonical_only = False):
         for trans in proteins['Associated Transcripts']:
             available = set(trans.split(';')).intersection(config.available_transcripts)
             pscout_available = available.intersection(config.pscout_matched_transcripts)
-            psp_available = available.intersection(config.psp_matched_transcripts)
 
             matches.append(';'.join(available) if len(available) > 0 else np.nan)
             pscout_matches.append(';'.join(pscout_available) if len(pscout_available) > 0 else np.nan)
-            psp_matches.append(';'.join(psp_available) if len(psp_available) > 0 else np.nan)
+
+            if config.psp_matched_transcripts is not None:
+                psp_available = available.intersection(config.psp_matched_transcripts)
+                psp_matches.append(';'.join(psp_available) if len(psp_available) > 0 else np.nan)
         proteins['Associated Matched Transcripts'] = matches
         proteins['Associated Matched Transcripts in ProteomeScout'] = pscout_matches
         proteins['Associated Matched Transcripts in PhosphoSitePlus'] = psp_matches
@@ -912,19 +906,11 @@ def get_psp_seq(row, phosphosite):
     """
     uniprot_id = row['UniProtKB isoform ID']
     iso_type = row['UniProt Isoform Type']
-    if iso_type == 'Alternative':
-        #check for isoform id sequence first
-        seq = utility.get_sequence_PhosphoSitePlus(uniprot_id, phosphosite)
-    else:
-        seq = utility.get_sequence_PhosphoSitePlus(uniprot_id.split('-')[0], phosphosite)
+    #check for isoform id sequence first
+    seq = utility.get_sequence_PhosphoSitePlus(uniprot_id, phosphosite)
     
     if isinstance(seq, int):
-        #try general uniprot id 
-        seq = utility.get_sequence_PhosphoSitePlus(uniprot_id.split('-')[0], phosphosite)
-        if isinstance(seq, int):
-            return np.nan
-        else:
-            return seq
+        return np.nan
     else:
         return seq
     

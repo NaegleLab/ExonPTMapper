@@ -18,10 +18,10 @@ modification_conversion = pd.read_csv(package_dir + '/../Resource_Files/modifica
 
 
 #update these lines as needed
-api_dir = 'C:/Users/Sam/OneDrive/Documents/GradSchool/Research/'
+api_dir = './'
 ps_data_dir = api_dir + '/ProteomeScoutAPI/proteomescout_mammalia_20220131/data.tsv'
-source_data_dir = 'C:/Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data/April18_2024/source_data/'
-processed_data_dir = 'C:/Users/Sam/OneDrive/Documents/GradSchool/Research/Splicing/Data/April18_2024/processed_data_dir/'
+source_data_dir = './source_data/'
+processed_data_dir = './processed_data_dir/'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
 #initialize logger
@@ -87,14 +87,7 @@ if os.path.isfile(source_data_dir + 'translator.csv'):
     translator = pd.read_csv(source_data_dir + 'translator.csv')
 else:
     logger.info('Translator file not found. Downloading from Database IDs of Ensembl, UniProt, PDB, CCDS, and Refseq via pybiomart.')
-    translator = utility.download_translator(logger)
-
-    #indicate whether listed isoforms are canonical, alternative or unannotated in uniprot
-    translator["UniProt Isoform Type"] = np.nan
-    translator.loc[translator['UniProtKB isoform ID'].isin(canonical_isoIDs.values()), "UniProt Isoform Type"] = 'Canonical' #if annotated as canonical
-    translator.loc[(translator['UniProtKB isoform ID'].isna()) & (~translator['UniProtKB/Swiss-Prot ID'].isna())] = 'Canonical'  #if the only isoform
-    translator.loc[(~translator['UniProtKB isoform ID'].isna()) & (translator["UniProt Isoform Type"].isna()), "UniProt Isoform Type"] = 'Alternative'   #if has isoform ID but is not identified as canonical
-
+    translator = utility.download_translator(logger, canonical_isoIDs)
     logger.info('Finished downloading and processing translator file. Saving to processed data directory.')
     
     #save to processed data directory
