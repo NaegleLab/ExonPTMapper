@@ -259,7 +259,7 @@ class PTM_mapper:
     #                    name = ptm)
                         
         
-    def mapPTMs_all(self, save_iter = 5000, restart = False, PROCESSES = 1):
+    def mapPTMs_all(self):
         """
         For all ptms in ptm_info, map to their respective exon and their location in the genome. Will also create a genomic coordinate specific dataframe called ptm_coordinates which will be used for mapping modifications onto alternative transcripts 
 
@@ -277,7 +277,10 @@ class PTM_mapper:
         None, but updates ptm_info attribute with location of ptm in exon, gene, and transcript, and creates new attribute called ptm_coordinates with unique info specific to genomic locations of ptms (for use with mapping to alternative transcripts)
         """
         #create copy of existing ptm_info dataframe
-        ptm_info = self.ptm_info.copy()
+        if 'Flanking Sequence' not in self.ptm_info.columns.values: 
+            self.getAllFlankingSeqs()
+
+        ptm_info = self.ptm_info.copy() 
         ptm_info = ptm_info.rename({'Transcript':'Transcripts'}, axis = 1)
         #separate ptm_info dataframe by unique transcripts
         ptm_info['Transcripts'] = ptm_info['Transcripts'].apply(lambda x: x.split(';'))
@@ -423,28 +426,47 @@ class PTM_mapper:
         print('Constructing ptm coordinates dataframe')
         logger.info('Constructing ptm coordinates dataframe')
         #save new dataframe which will be trimmed version of ptm info with each row containing a PTM mapped to unique genomic coordinates
-        ptm_coordinates = ptm_info[['Genomic Coordinates', 'PTM','Residue', 'Modification', 'Chromosome/scaffold name', 'Strand','Gene Location (NC)', 'Ragged', 'Ragged Genomic Location', 'Exon stable ID']].copy()
+        ptm_coordinates = ptm_info[['Genomic Coordinates', 'PTM','Residue', 'Modification', 'Modification Class','Flanking Sequence', 'Chromosome/scaffold name', 'Strand','Gene Location (NC)', 'Ragged', 'Ragged Genomic Location', 'Exon stable ID', 'Gene name']].copy()
         ptm_coordinates = ptm_coordinates.dropna(subset = 'Gene Location (NC)')
         ptm_coordinates = ptm_coordinates.drop_duplicates()
         ptm_coordinates = ptm_coordinates.astype({'Gene Location (NC)': int, 'Strand':int, 'Ragged':bool})
 
         #group modifications for the same ptm in the same row
         grouped = ptm_coordinates.groupby(['Genomic Coordinates', 'Chromosome/scaffold name', 'Residue', 'Strand', 'Gene Location (NC)', 'Ragged'])
-        ptm_coordinates = pd.concat([grouped['PTM'].agg(lambda x: ';'.join(np.unique(x))), grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(lambda x: ';'.join(np.unique(x))), grouped['Exon stable ID'].agg(lambda x: ';'.join(np.unique(x)))], axis = 1)
+        ptm_coordinates = pd.concat([grouped['PTM'].agg(utility.join_unique_entries), grouped['Flanking Sequence'].agg(utility.join_unique_entries), grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(utility.join_unique_entries), grouped['Modification Class'].agg(utility.join_unique_entries), grouped['Exon stable ID'].agg(utility.join_unique_entries), grouped['Gene name'].agg(utility.join_unique_entries)], axis = 1)
         ptm_coordinates = ptm_coordinates.reset_index()
-        ptm_coordinates = ptm_coordinates.rename({'PTM':'Source of PTM', 'Exon stable ID': 'Source Exons'}, axis = 1)
+        ptm_coordinates = ptm_coordinates.rename({'PTM':'Source of PTM', 'Exon stable ID': 'Source Exons', 'Gene Location (NC)':'Gene Location (hg38)', 'Flanking Sequence':'Canonical Flanking Sequence'}, axis = 1)
+
+        #annotate with ptm position in canonical isoform
+        ptm_coordinates['UniProtKB Accession'] = ptm_coordinates['Source of PTM'].apply(lambda x: x.split(';'))
+        ptm_coordinates['Residue'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: x[0].split('_')[1][0])
+
+        #get location of PTM in canonical isoform, if found in canonical isoform
+        ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: [ptm.split('_')[1][1:] for ptm in x if ptm.split('_')[0] in config.canonical_isoIDs.values()])
+        ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates['PTM Position in Canonical Isoform'].apply(lambda x: ';'.join(x) if len(x) > 0 else np.nan)
+        ptm_coordinates['Found in Canonical'] = ptm_coordinates['PTM Position in Canonical Isoform'].apply(lambda x: x == x)
+
+
+        #set accession to use: if canonical use the non-isoform id, else use the first isoform id in list
+        ptm_coordinates['UniProtKB Accession'] = ptm_coordinates.apply(lambda x: ';'.join([ptm.split('-')[0]for ptm in x['UniProtKB Accession'] if ptm.split('_')[0] in config.canonical_isoIDs.values()]) if x['Found in Canonical'] else x['UniProtKB Accession'][0].split('_')[0], axis = 1) 
+            #update location of PTM to be from first isoform in list if not found in canonical isoform
+        ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates.apply(lambda x: x['PTM Position in Canonical Isoform'] if x['Found in Canonical'] else x['Source of PTM'].split(';')[0].split('_')[1][1:], axis = 1)
+
+
+        #set non-isoform specific Uniprot ID
+        #ptm_coordinates['UniProtKB Accession'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: ';'.join([ptm.split('-')[0] for ptm in x]))
+
+
 
         #make genomic coordinates the index of dataframe
-        ptm_coordinates.index = ptm_coordinates['Genomic Coordinates']
-        ptm_coordinates = ptm_coordinates.drop('Genomic Coordinates', axis = 1)
+        ptm_coordinates = ptm_coordinates.set_index('Genomic Coordinates')
 
-        #get coordinates in the hg19 version of ensembl using hg38 information using pyliftover
-        hg19_coords = []
-        liftover_object = pyliftover.LiftOver('hg38','hg19')
-        for i, row in tqdm(ptm_coordinates.iterrows(), total = ptm_coordinates.shape[0], desc = 'Converting from hg38 to hg19 coordinates'):
-            hg19_coords.append(convertToHG19(row['Gene Location (NC)'], row['Chromosome/scaffold name'], row['Strand'], liftover_object = liftover_object))
-        ptm_coordinates['HG19 Location'] = hg19_coords
-        ptm_coordinates = ptm_coordinates.drop_duplicates()
+        #reorder column names
+        ptm_coordinates = ptm_coordinates[['Gene name', 'UniProtKB Accession', 'Residue', 'PTM Position in Canonical Isoform', 'Modification', 'Modification Class', 'Canonical Flanking Sequence', 'Chromosome/scaffold name', 'Strand', 'Gene Location (hg38)', 'Ragged', 'Ragged Genomic Location', 'Source Exons', 'Source of PTM', 'Found in Canonical']]
+
+
+
+        
         self.ptm_coordinates = ptm_coordinates.copy()
         
         
@@ -465,9 +487,25 @@ class PTM_mapper:
         ptm_info.head()
         self.ptm_info = ptm_info.copy()
             
+    def add_new_coordinate_type(self, to_type = 'hg19'):
+        #get coordinates in the hg19 version of ensembl using hg38 information using pyliftover
+        new_coords = []
+        if to_type == 'hg19' or (to_type == 'hg18' and 'Gene Location (hg19)' not in self.ptm_coordinates.columns.values):
+            liftover_object = pyliftover.LiftOver('hg38',to_type)
+            for i, row in tqdm(self.ptm_coordinates.iterrows(), total = self.ptm_coordinates.shape[0], desc = 'Converting from hg38 to hg19 coordinates'):
+                new_coords.append(convertToHG19(row['Gene Location (hg38)'], row['Chromosome/scaffold name'], row['Strand'], liftover_object = liftover_object))
+            self.ptm_coordinates[f'Gene Location (hg19)'] = new_coords
+        
+        if to_type in ['hg18', 'hg17']:
+            liftover_object = pyliftover.LiftOver('hg19',to_type)
+            for i, row in tqdm(self.ptm_coordinates.iterrows(), total = self.ptm_coordinates.shape[0], desc = f'Converting from hg19 to {to_type} coordinates'):
+                new_coords.append(convertToHG19(row['Gene Location (hg19)'], row['Chromosome/scaffold name'], row['Strand'], liftover_object = liftover_object))
+            self.ptm_coordinates[f'Gene Location ({to_type})'] = new_coords
+
+
 
             
-    def explode_PTMinfo(self, explode_cols = ['Genes', 'Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon rank in transcript']):
+    def explode_PTMinfo(self, explode_cols = ['Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon rank in transcript', 'Exon Location (AA)', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to N-terminal Splice Boundary (NC)']):
         """
         Expand the ptm_info dataframe into distinct rows for each transcript that the ptm is associated with. Resulting dataframe will have some rows referencing the same ptm, but with data associated with a specific transcript
 
@@ -1814,6 +1852,27 @@ def getPTMLoc(exon, mapper, gene_loc, strand):
     else:
         return np.nan, np.nan, np.nan
 
+def convert_genomic_coordinates(location, chromosome, strand, from_type = 'hg38', to_type = 'hg19', liftover_object = None):
+    if liftover_object is None:
+        liftover_object = pyliftover(from_type,to_type)
+    
+    if strand == 1:
+        strand = '+'
+    else:
+        strand = '-'
+    
+    chromosome = f'chr{chromosome}'
+    results = liftover_object.convert_coordinate(chromosome, location - 1, strand)
+    if len(results) > 0:
+        new_chromosome = results[0][0]
+        new_strand = results[0][2]
+        if new_chromosome == chromosome and new_strand == strand:
+            return int(results[0][1]) + 1
+        else:
+            return -1
+    else:
+        return np.nan
+
 def convertToHG19(hg38_location, chromosome, strand, liftover_object = None):
     """
     Use pyliftover to convert from hg38 to hg19 coordinates systems
@@ -1835,7 +1894,7 @@ def convertToHG19(hg38_location, chromosome, strand, liftover_object = None):
         genomic coordinates in hg19 version of Ensembl
     """
     if liftover_object is None:
-        liftover_object = pyliftover('hg19','hg38')
+        liftover_object = pyliftover('hg38','hg19')
     
     if strand == 1:
         strand = '+'
@@ -1843,7 +1902,47 @@ def convertToHG19(hg38_location, chromosome, strand, liftover_object = None):
         strand = '-'
     
     chromosome = f'chr{chromosome}'
-    results = liftover_object.convert_coordinate(chromosome, hg38_location - 1, strand)
+    results = liftover_object.convert_coordinate(chromosome, from_location - 1, strand)
+    if len(results) > 0:
+        new_chromosome = results[0][0]
+        new_strand = results[0][2]
+        if new_chromosome == chromosome and new_strand == strand:
+            return int(results[0][1]) + 1
+        else:
+            return -1
+    else:
+        return np.nan
+    
+def convert_to_new_coordinates(from_location, chromosome, strand, liftover_object = None, from_coord = 'hg38', to_coord = 'hg19'):
+    """
+    Use pyliftover to convert from hg38 to hg19 coordinates systems
+    
+    Parameters
+    ----------
+    hg38_location: int
+        genomic location to convert, in hg38 version of Ensembl
+    chromosome: int
+        chromosome number of genomic location
+    strand: int
+        strand of gene associated with genomic location
+    liftover_object: pyliftover object
+        object used to convert coordinates. If None, will create new object
+        
+    Returns
+    -------
+    hg19_coordinates: int
+        genomic coordinates in hg19 version of Ensembl
+    """
+    if liftover_object is None:
+        liftover_object = pyliftover(from_coord,to_coord)
+    
+    if strand == 1:
+        strand = '+'
+    else:
+        strand = '-'
+    
+    chromosome = f'chr{chromosome}'
+    results = liftover_object.convert_coordinate(chromosome, from_location - 1, strand)
     if len(results) > 0:
         new_chromosome = results[0][0]
         new_strand = results[0][2]
