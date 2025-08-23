@@ -10,7 +10,7 @@ import logging
 import math
 from collections import defaultdict
 import pybiomart
-from ExonPTMapper import config
+from ExonPTMapper import config, utility
 import time
 
 #import swifter
@@ -24,10 +24,9 @@ handler.setFormatter(log_format)
 logger.addHandler(handler)
 
 def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_name', 'strand','start_position','end_position', 'chromosome_name', 'uniprotswissprot'],
-                            transcript_attributes = ['ensembl_gene_id','ensembl_transcript_id','transcript_length','transcript_appris', 'transcript_is_canonical','transcript_tsl'],
+                            transcript_attributes = ['ensembl_gene_id','ensembl_transcript_id','transcript_length','transcript_appris', 'transcript_is_canonical','transcript_tsl', 'transcript_gencode_basic'],
                             exon_attributes = ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_exon_id', 'is_constitutive','rank','exon_chrom_start', 'exon_chrom_end'],
-                            filters = {'transcript_biotype':'protein_coding', 'transcript_gencode_basic':True, 
-                                       'chromosome_name': ['X', 'Y', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11','12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22','MT']}):
+                            filters = {'transcript_biotype':'protein_coding', 'chromosome_name': ['X', 'Y', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11','12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22','MT']}):
     """
     Using pybiomart, download basic information for all protein-coding genes, transcripts, and exons. Will both save the dataframes to the processed_data_dir and return them as a tuple.
 
@@ -40,7 +39,7 @@ def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_
     exon_attributes: list
         Attributes to download for each exon. Default is ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_exon_id', 'is_constitutive','rank','exon_chrom_start', 'exon_chrom_end']. For list of possible attributes, use the dataset.list_attributes() method within pybiomart, see their documentation for more details.
     filters: dict
-        Filters that restrict the information being downloaded, namely to be protein coding and a part of the gencode basic set. Default is {'biotype':'protein_coding','transcript_biotype':'protein_coding', 'transcript_gencode_basic':True}. All exon information will be downloaded, and then filtered based on transcript/gene info. For list of possible filters, use the dataset.list_filters() method within pybiomart, see their documentation for more details.
+        Filters that restrict the information being downloaded, namely to be protein coding and a part of the gencode basic set. Default is {'biotype':'protein_coding','transcript_biotype':'protein_coding', 'transcript_gencode_basic':True}. All exon information will be downloaded, and then filtered based on transcript/gene info. For list of possible filters, use the dataset.list_filters() method within pybiomart, see their documentation for more details. Recommended filters include transcript_biotype and biotype as protein coding. You may optionally choose to set transcript_gencode_basic = True, but this will reduce the total number of genes covered.
 
     Returns:
     ----------
@@ -87,8 +86,8 @@ def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_
 
     #check to make sure same information is found in each dataframe
 
-    if exons['Transcript stable ID'].nunique() == transcripts.shape[0] and transcripts.shape[0] == genes['Transcript stable ID'].nunique():
-        logger.warning('Different number of transcripts found in exon, transcript, and gene dataframe. This may be due to transcripts being filtered out due to missing information. Proceed with caution.')
+    if exons['Transcript stable ID'].nunique() == transcripts.shape[0]:
+        logger.warning('Different number of transcripts found in exon and transcript dataframe. This may be due to transcripts being filtered out due to missing information. Proceed with caution.')
 
     logger.info('Exon, transcript, and gene information saved in processed data directory. A total of {} genes, {} transcripts, and {} exons were downloaded.'.format(genes.shape[0], transcripts.shape[0], exons['Exon stable ID'].nunique()))
     
@@ -222,10 +221,25 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
     logger.info(f'There were {missing_cds_loc} transcripts whose coding sequence location could not be identified ({round(missing_cds_loc/transcripts.shape[0]*100, 2)}%)')
     
     #add appris functional scores if information is provided
+    print('Adding APPRIS functional scores')
     if APPRIS is not None:
-        print('Adding APPRIS functional scores')
-        logger.info('Adding data downloaded from APPRIS database, including TRIFID functional scores')
+        logger.info('Adding provided APPRIS data with trifid scores')
         start = time.time()
+        #extract relevant columns and rename to more readable column names
+        APPRIS = APPRIS[['transcript_id','ccdsid','norm_trifid_score']]
+        APPRIS = APPRIS.rename({'transcript_id':'Transcript stable ID', 'ccdsid':'CCDS ID', 'norm_trifid_score':'TRIFID Score'}, axis = 1)
+        #check to make sure there are not duplicate transcript entries
+        if APPRIS['Transcript stable ID'].nunique() != APPRIS.shape[0]:
+            logger.warning('APPRIS data contains rows with duplicate transcripts. Removing duplicates, but proceed with caution')
+            APPRIS = APPRIS.drop_duplicates(subset = 'Transcript stable ID')
+        #add appris data to transcripts dataframe
+        transcripts = transcripts.merge(APPRIS, on = 'Transcript stable ID', how = 'left')
+        end = time.time()
+        print('Elapsed time:', end-start,'\n')
+    else:
+        logger.info('Adding TRIFID data downloaded directly from APPRIS database using GRCh38 annotation')
+        start = time.time()
+        APPRIS = pd.read_csv('https://apprisws.bioinfo.cnio.es/pub/releases/2024_03.v48/datafiles/homo_sapiens/GRCh38/appris_method.trifid.txt', sep = '\t')
         #extract relevant columns and rename to more readable column names
         APPRIS = APPRIS[['transcript_id','ccdsid','norm_trifid_score']]
         APPRIS = APPRIS.rename({'transcript_id':'Transcript stable ID', 'ccdsid':'CCDS ID', 'norm_trifid_score':'TRIFID Score'}, axis = 1)
@@ -252,7 +266,7 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
 
     
     #indicate whether transcript is canonical based on translator dataframe
-    trim_translator = config.translator[['Transcript stable ID', 'Uniprot Canonical']].drop_duplicates()
+    trim_translator = config.translator[['Transcript stable ID', 'UniProt Isoform Type']].drop_duplicates()
     transcripts = transcripts.merge(trim_translator, on = 'Transcript stable ID', how = 'left')
     
     #add transcript id as index again
@@ -285,30 +299,43 @@ def getIsoformInfo(transcripts):
     #group transcripts by gene and protein sequences
     isoforms = isoforms.reset_index().groupby(['Amino Acid Sequence', 'Gene stable ID'])['Transcript stable ID'].agg(';'.join).reset_index()
     
+    #reduce translator for analysis
+    trim_translator = config.translator[['Gene name','Gene stable ID','Transcript stable ID', 'UniProtKB isoform ID', 'UniProt Isoform Type']].drop_duplicates()
+
     #iterate through each grouped isoform, if it has uniprot id, use that, else make up new name that follows this format 'ENS_{Gene Name}_{Isoform_num}'
-    isoform_id = []
-    isoform_type = []
+    isoform_id = []     #id (or ids if multiple uniprot ids are matching those transcripts)
+    isoform_type = []     #Whether it is associated with canonical/alternative
+    mislabeled_isoforms = []    #annotate cases where uniprot isoforms do not match ensembl information and match protein sequence
     isoform_numbers = defaultdict(int)
     for i, row in isoforms.iterrows():
         #grab tranlator information for transcripts associated with isoform
-        tmp = config.translator[config.translator['Transcript stable ID'].isin(row['Transcript stable ID'].split(';'))]
+        tmp = trim_translator[trim_translator['Transcript stable ID'].isin(row['Transcript stable ID'].split(';'))]
         #check if isoform has uniprot id associated with any of the transcripts, if not, create new isoform id
-        if tmp['UniProtKB isoform ID'].isna().all() and tmp['UniProtKB/Swiss-Prot ID'].isna().all():
-            gene_name = tmp['Gene name'].unique()[0]
+        if tmp['UniProtKB isoform ID'].isna().all():
+            #grab non nan gene names
+            for i, row in tmp.iterrows():
+                if row['Gene name'] == row['Gene name']:
+                    gene_name = row['Gene name']
+                    break
+                gene_name = row['Gene stable ID'] #set as ensembl id if no gene name is available
+            
             isoform_numbers[gene_name] = isoform_numbers[gene_name] + 1
             isoform_id.append(f'ENS-{gene_name}-{isoform_numbers[gene_name]}')
             isoform_type.append('Alternative')
-        elif not tmp['UniProtKB isoform ID'].isna().all():
+            mislabeled_isoforms.append(np.nan)
+        else: #if isoform id is provided
             tmp = tmp.dropna(subset = 'UniProtKB isoform ID')
-            isoform_id.append(tmp['UniProtKB isoform ID'].unique()[0])
-            if '-1' in tmp['UniProtKB isoform ID'].unique()[0]:
-                isoform_type.append('Canonical')
+            iso_id = tmp["UniProtKB isoform ID"].unique()
+            if len(iso_id) == 1:
+                isoform_id.append(iso_id[0])
+                isoform_type.append(tmp['UniProt Isoform Type'].values[0])
+                mislabeled_isoforms.append(np.nan)
             else:
-                isoform_type.append('Alternative')
-        else:
-            tmp = tmp.dropna(subset = 'UniProtKB/Swiss-Prot ID')
-            isoform_id.append(tmp['UniProtKB/Swiss-Prot ID'].unique()[0] + '-1')
-            isoform_type.append('Canonical')
+                isoform_id.append(';'.join(iso_id))
+                isoform_type.append('Multiple')
+                mislabeled_isoforms.append('Multiple Isoforms')
+                logger.warning(f"{iso_id[0].split('-')[0]} caused error due to being associated with multiple different UniProt isoform ids")
+
     isoforms['Isoform ID'] = isoform_id
     isoforms['Isoform Type'] = isoform_type
     #get length of each isoform
@@ -317,7 +344,7 @@ def getIsoformInfo(transcripts):
     logger.info('Isoform dataframe created.')
     return isoforms
 
-def getProteinInfo(transcripts, genes):
+def getProteinInfo(genes, canonical_only = False):
     """
     Process translator dataframe so to get protein specific information (collapse protein isoforms into one row). Add context, including:
     1. Transcripts associated with the canonical uniprot protein
@@ -340,87 +367,97 @@ def getProteinInfo(transcripts, genes):
         Protein-specific dataframe, in which each row corresponds to a unique UniProt protein. Includes information about the number of uniprot isoforms and transcripts associated with canonical or alternative isoforms
     """
     logger.info('Constructing protein-specific dataframe')
-    #grab canonical UniProt proteins and associated transcripts from translator dataframe
-    proteins = config.translator[config.translator['Uniprot Canonical'] == 'Canonical']
-    proteins = proteins[['UniProtKB/Swiss-Prot ID','Transcript stable ID']].drop_duplicates().copy()
-    #aggregate information along unique UniProt IDs
-    proteins = proteins.groupby('UniProtKB/Swiss-Prot ID').agg(';'.join)
-    proteins.columns = ['Canonical Transcripts']
 
-    #repeat above process but for alternative UniProt isoforms: get transcripts and number of isoforms
-    variants = config.translator[config.translator['Uniprot Canonical'] == 'Alternative']
-    variants = variants[['UniProtKB/Swiss-Prot ID', 'Transcript stable ID']].drop_duplicates()
-    variants_grouped = variants.groupby('UniProtKB/Swiss-Prot ID')
-    num_variants = variants_grouped.count() + 1
-    num_variants.columns = ['Number of Uniprot Isoforms']
-    variant_trans = variants_grouped.agg(';'.join)
-    variant_trans.columns = ['Alternative Transcripts (Uniprot Isoforms)']
+    #if requested, restrict to canonical isoforms
+    if canonical_only:
+        proteins = config.translator[config.translator['Uniprot Isoform Type'] == 'Canonical']
+        alt_transcripts = config.translator[config.translator['Uniprot Isoform Type'] == 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(utility.join_unique_entries).reset_index()
+    else:
+        proteins = config.translator.dropna(subset = ['UniProtKB isoform ID'])
+        alt_transcripts = config.translator.groupby('Gene stable ID')['Transcript stable ID'].apply(utility.join_unique_entries).reset_index()
+
+    # restrict to useful info on proteins and remove duplicate entries
+    proteins = proteins[['UniProtKB isoform ID', 'UniProt Isoform Type', 'Transcript stable ID']].drop_duplicates().copy()
+    #aggregate information along unique UniProt IDs
+    proteins = proteins.groupby('UniProtKB isoform ID', as_index = False).agg(lambda x: ';'.join(np.unique(x)))
+    proteins = proteins.rename(columns = {'Transcript stable ID':'Associated Transcripts'})
+
+    proteins.insert(0, 'UniProtKB/Swiss-Prot ID', [i.split('-')[0] for i in proteins['UniProtKB isoform ID']])
+    
+
+    #count the number of isoforms for each uniprot id
+    proteins['Number of UniProtKB Isoforms'] = proteins.groupby('UniProtKB/Swiss-Prot ID')['UniProtKB isoform ID'].transform(lambda x: len(np.unique(x)))
+
+    #set isoform id as index
+    proteins = proteins.set_index('UniProtKB isoform ID')
+
+
 
     #add available canonical transcripts with matching uniprot sequence (check if transcript is found in config.available_transcripts list)
     if config.available_transcripts is not None:
-        canonical_matches = []
-        for trans in proteins['Canonical Transcripts']:
-            match = []
-            for available in config.available_transcripts:
-                if available in trans:
-                    match.append(available)
-            #add to list of matches (if no matches, add np.nan)
-            if len(match) > 0:
-                canonical_matches.append(';'.join(match))
-            else:
-                canonical_matches.append(np.nan)
-        proteins['Matched Canonical Transcripts'] = canonical_matches
+        matches = []
+        pscout_matches = []
+        psp_matches = []
+        for trans in proteins['Associated Transcripts']:
+            available = set(trans.split(';')).intersection(config.available_transcripts)
+            pscout_available = available.intersection(config.pscout_matched_transcripts)
+
+            matches.append(';'.join(available) if len(available) > 0 else np.nan)
+            pscout_matches.append(';'.join(pscout_available) if len(pscout_available) > 0 else np.nan)
+
+            if config.psp_matched_transcripts is not None:
+                psp_available = available.intersection(config.psp_matched_transcripts)
+                psp_matches.append(';'.join(psp_available) if len(psp_available) > 0 else np.nan)
+        proteins['Associated Matched Transcripts'] = matches
+        proteins['Associated Matched Transcripts in ProteomeScout'] = pscout_matches
+        proteins['Associated Matched Transcripts in PhosphoSitePlus'] = psp_matches
     else:
-        logger.warning('No list of available transcripts provided. Cannot determine which transcripts have matching sequences to UniProt canonical isoforms. Run processing.getMatchedTranscripts() to get this information.')
         print('No list of available transcripts provided. Cannot determine which transcripts have matching sequences to UniProt canonical isoforms. Run processing.getMatchedTranscripts() to get this information.')
 
-    #add number of uniprot isoforms to dataframe, replace nan with 1 (only have the canonical)
-    proteins = proteins.merge(num_variants, left_index = True, right_index = True, how = 'outer')
-    proteins.loc[proteins['Number of Uniprot Isoforms'].isna(), 'Number of Uniprot Isoforms'] = 1
+    #get all transcripts associated with the same gene that are not associated with that isoform
+    #proteins = utility.join_except_self(proteins, group_col = 'Gene stable ID', value_col = 'Associated Transcripts', new_col = 'Variant Transcripts', sep = ';') #variants of the protein not encompassed by the isoform
+    #proteins = utility.join_except_self(proteins, group_col = 'Gene stable ID', value_col = 'Associated Matched Transcripts', new_col = 'Variant Matched Transcripts', sep = ';') # matched versions of variant transcripts
+    #proteins['Number of Variant Transcripts'] = proteins['Variant Transcripts'].apply(lambda x: len(x.split(';'))) #add number of variant transcripts
 
-    #add alternative transcripts to dataframe
-    proteins = proteins.merge(variant_trans, left_index = True, right_index = True, how = 'outer')
+    #grab Ensembl gene ids associated with each uniprot protein, explode on each gene id
+    proteins['Gene stable ID'] = config.translator.groupby('UniProtKB isoform ID')['Gene stable ID'].agg(utility.join_unique_entries)
 
-    #add available transcripts with matching uniprot sequence
-    if config.available_transcripts is not None:
-        alternative_matches = []
-        for trans in proteins['Alternative Transcripts (Uniprot Isoforms)']:
-            match = []
-            if trans is np.nan:
-                alternative_matches.append(np.nan)
-            else:
-                for available in config.available_transcripts:
-                    if available in trans:
-                        match.append(available)
-                #add to list of matches (if no matches, add np.nan)
-                if len(match) > 0:
-                    alternative_matches.append(';'.join(match))
-                else:
-                    alternative_matches.append(np.nan)
-        proteins['Matched Alternative Transcripts'] = alternative_matches
-    
     #grab Ensembl gene ids associated with each uniprot protein, explode on each gene id
     prot_genes = config.translator.groupby('UniProtKB/Swiss-Prot ID')['Gene stable ID'].apply(set)
-    proteins['Gene stable IDs'] = prot_genes.apply(';'.join)
     prot_genes = prot_genes.explode().reset_index()
 
     #grab all transcripts associated with the gene, that are not associated with the canonical uniprot protein
-    alt_transcripts = config.translator[config.translator['Uniprot Canonical'] != 'Canonical'].groupby('Gene stable ID')['Transcript stable ID'].apply(';'.join).reset_index()
     prot_genes = pd.merge(prot_genes,alt_transcripts, on = 'Gene stable ID', how = 'left')
+    transcripts_df = prot_genes.dropna(subset = 'Transcript stable ID').groupby('UniProtKB/Swiss-Prot ID')['Transcript stable ID'].agg(';'.join)
+    #go through each row and remove the transcripts already associated with each protein id from variant list
+    variant_transcript_list = []
+    for i, row in proteins.iterrows():
+        uniprot_id = row['UniProtKB/Swiss-Prot ID']
+        if uniprot_id in transcripts_df.index:
+            variants = transcripts_df.loc[uniprot_id]
+            #get rid of ids that are already associated with uniprot isoform
+            associated_trans = row['Associated Transcripts'].split(';')
+            variants = ';'.join([trans for trans in variants.split(';') if trans not in associated_trans])
+            if variants == '':
+                variant_transcript_list.append(np.nan)
+            else:
+                variant_transcript_list.append(variants)
+        else:
+            variant_transcript_list.append(np.nan)
+    proteins['Variant Transcripts'] = variant_transcript_list
 
     #grab genes for which there are multiple uniprot proteins associated with it, add to prot_genes info
     nonunique_genes = genes[genes['Number of Associated Uniprot Proteins'] > 1].index
     nonunique_genes = pd.DataFrame({'Unique Gene':np.repeat('No', len(nonunique_genes)), 'Gene stable ID':nonunique_genes})
     prot_genes = prot_genes.merge(nonunique_genes, on = 'Gene stable ID', how = 'left')
-    prot_genes.index = prot_genes['UniProtKB/Swiss-Prot ID']
-    prot_genes = prot_genes.drop('UniProtKB/Swiss-Prot ID', axis = 1)
+    prot_genes = prot_genes.set_index('UniProtKB/Swiss-Prot ID')
     #For proteins associated with unique gene, mark as unique
     prot_genes['Unique Gene'] = prot_genes['Unique Gene'].replace(np.nan, 'Yes')
 
 
-    #add all transcripts associated with the gene, regardless of if it is associated with a uniprot protein
-    proteins['Alternative Transcripts (All)'] = prot_genes.dropna(subset = 'Transcript stable ID').groupby('UniProtKB/Swiss-Prot ID')['Transcript stable ID'].apply(set).apply(';'.join)
-    proteins['Unique Gene'] = prot_genes.groupby('UniProtKB/Swiss-Prot ID')['Unique Gene'].apply(set).apply(';'.join)
+    #append info on whether protein is associated with a unique gene
+    unique_gene = prot_genes.groupby('UniProtKB/Swiss-Prot ID')['Unique Gene'].agg(utility.join_unique_entries).reset_index()
+    proteins = proteins.reset_index().merge(unique_gene, on = 'UniProtKB/Swiss-Prot ID', how = 'left').set_index('UniProtKB isoform ID')
 
     #report how many proteins are not associated with a unique gene
     num_nonunique = prot_genes[prot_genes['Unique Gene'] == 'No'].shape[0]
@@ -493,12 +530,12 @@ def findCodingRegion(transcripts, transcript_sequence_col = 'Transcript Sequence
     cds_end = []
     warnings = []
     #iterate through each transcript, find the start and end position of coding sequence using re.search()
-    for i in transcripts.index:
+    for i,row in transcripts.iterrows():
         #grab transcript and coding sequence
-        coding_sequence = transcripts.at[i,coding_sequence_col]
-        full_transcript = transcripts.at[i,transcript_sequence_col]
+        coding_sequence = row[coding_sequence_col]
+        full_transcript = row[transcript_sequence_col]
         #check to make sure both coding sequence and transcript sequence are available
-        if full_transcript is not np.nan and coding_sequence is not np.nan:
+        if full_transcript == full_transcript and coding_sequence == coding_sequence:
             #find start and end position of coding sequence in transcript sequence, if not found, return np.nan
             match = re.search(coding_sequence, full_transcript)
             if match:
@@ -509,7 +546,7 @@ def findCodingRegion(transcripts, transcript_sequence_col = 'Transcript Sequence
                 cds_start.append(np.nan)
                 cds_end.append(np.nan)
                 warnings.append('Coding Sequence Not Found in Transcript')
-        elif coding_sequence is not np.nan:
+        elif coding_sequence == coding_sequence:
             cds_start.append(np.nan)
             cds_end.append(np.nan)
             warnings.append('Missing Transcript Sequence Information')
@@ -519,7 +556,7 @@ def findCodingRegion(transcripts, transcript_sequence_col = 'Transcript Sequence
             warnings.append('Missing Coding Sequence Information')
     return cds_start, cds_end, warnings
 
-def getMatchedTranscripts(transcripts, update = False): 
+def getMatchedTranscripts(transcripts, canonical_only = False, phosphosite_data = None, update = False): 
     """
     Given the transcript dataframe from processTranscripts() function, identify which canonical transcripts (defined by UniProt) have a matching sequence in the proteomeScout database. This is done by comparing the amino acid sequence of the transcript to the amino acid sequence of the protein in proteomeScout. Transcripts with matching information will be stored in config.available_transcripts and saved to a .json file for future use. Only these transcripts will be considered during mapping.
 
@@ -536,30 +573,60 @@ def getMatchedTranscripts(transcripts, update = False):
     """
     if config.available_transcripts is None or update:  #check if need to run analysis
         print('Finding available transcripts')
-        logger.info('Finding transcripts with matching protein sequence information in ProteomeScout')
+        logger.info(f'Finding transcripts with matching protein sequence information in ProteomeScout (canonical_only={canonical_only})')
         start = time.time()
         #get all transcripts associated with a canonical UniProt ID
-        seq_align = config.translator.loc[config.translator['Uniprot Canonical'] == 'Canonical', ['Transcript stable ID', 'UniProtKB/Swiss-Prot ID']].drop_duplicates().copy()
+        if canonical_only:
+            seq_align = config.translator.loc[config.translator['UniProt Isoform Type'] == 'Canonical', ['Transcript stable ID', 'UniProtKB isoform ID', 'UniProt Isoform Type']].drop_duplicates().copy()
+        else:
+            seq_align = config.translator.dropna(subset = 'UniProtKB/Swiss-Prot ID')[['Transcript stable ID', 'UniProtKB isoform ID', 'UniProt Isoform Type']].drop_duplicates().copy()
         #record the total number of canonical transcripts
         num_transcripts = seq_align['Transcript stable ID'].nunique()
-        num_proteins = seq_align['UniProtKB/Swiss-Prot ID'].nunique()
-        
-        #determine if ensembl and proteomescout information matches
-        seq_align['PS Seq'] = seq_align.apply(get_ps_seq, axis= 1)
-        seq_align['GENCODE Seq'] = get_gencode_seq(seq_align, transcripts)
-        seq_align['Exact Match'] = seq_align.apply(perfect_align, axis=1)
+        num_isoforms = seq_align['UniProtKB isoform ID'].nunique()
+        num_proteins = seq_align['UniProtKB isoform ID'].apply(lambda x: x.split('-')[0]).nunique()
 
-        #extract the transcripts that have matching sequence information
-        perfect_matches = seq_align[seq_align['Exact Match']==True]
-        
+        #determine if ensembl and proteomescout information matches
+        seq_align['ProteomeScout Seq'] = seq_align.apply(get_pscout_seq, axis= 1)
+        seq_align['GENCODE Seq'] = get_gencode_seq(seq_align, transcripts)
+        seq_align['ProteomeScout Match'] = seq_align.apply(perfect_align, args=('ProteomeScout Seq',), axis=1)
+        config.pscout_matched_transcripts = list(seq_align.loc[seq_align['ProteomeScout Match'], 'Transcript stable ID'].unique())
+        if phosphosite_data is not None:
+            seq_align['PhosphoSitePlus Seq'] = seq_align.apply(get_psp_seq, args = (phosphosite_data,), axis = 1)
+            seq_align['PhosphoSitePlus Match'] = seq_align.apply(perfect_align, args=('PhosphoSitePlus Seq',), axis = 1)
+            config.psp_matched_transcripts = list(seq_align.loc[seq_align['PhosphoSitePlus Match'], 'Transcript stable ID'].unique())
+
+             #extract the transcripts that have matching sequence information
+            perfect_matches = seq_align[(seq_align['ProteomeScout Match']) | (seq_align['PhosphoSitePlus Match'])]
+        else:
+            perfect_matches = seq_align[seq_align['ProteomeScout Match']]
+
+        #extract strings indicating the databases used
+        if phosphosite_data is not None:
+            dbs = 'ProteomeScout and PhosphoSitePlus'
+        else:
+            dbs = 'ProteomeScout'
+
+        print(f"{num_transcripts} found associated with UniProt proteins.")
         #indicate how many transcripts matched
-        print(f'{num_transcripts} found associated with canonical UniProt proteins.\n {round(perfect_matches.shape[0]/num_transcripts*100, 2)}% of these transcripts match sequence information in ProteomeScout.')
-        logger.info(f'{num_transcripts} found associated with canonical UniProt proteins ({num_proteins} unique proteins).\n {round(perfect_matches.shape[0]/num_transcripts*100, 2)}% of these transcripts match sequence information in ProteomeScout.')
+        if not canonical_only:
+            isoform_matches = round(perfect_matches['UniProtKB isoform ID'].nunique()/num_isoforms*100, 2)
+            print(f"{isoform_matches}% of isoforms have at least one transcript that matches sequence information in {dbs}.")
         
+        protein_matches = round(perfect_matches['UniProtKB isoform ID'].apply(lambda x: x.split('-')[0]).nunique()/num_proteins*100, 2)
+        print(f"{protein_matches}% of proteins have at least one transcript that matches sequence information in {dbs}.")
+
         #save the list of available transcripts with matching sequence information
-        config.available_transcripts = perfect_matches['Transcript stable ID'].tolist()
+        config.available_transcripts = list(perfect_matches['Transcript stable ID'].unique())
+
         with open(config.processed_data_dir+"available_transcripts.json", 'w') as f:
             json.dump(config.available_transcripts, f, indent=2) 
+
+        with open(config.processed_data_dir+'pscout_matched_transcripts.json', 'w') as f:
+            json.dump(config.pscout_matched_transcripts, f, indent = 2)
+
+        if phosphosite_data is not None:
+            with open(config.processed_data_dir+'psp_matched_transcripts.json', 'w') as f:
+                json.dump(config.psp_matched_transcripts, f, indent = 2  )
         end = time.time()
         print('Elapsed time:',end-start, '\n')
     else:
@@ -752,7 +819,7 @@ def exonlength(row, seq_col = 'Exon Sequence', exon_start_col = 'Exon Start (Gen
     return length
 
 
-def translate(row, coding_seq_col = 'Coding Sequence'):
+def translate(row, coding_seq_col = 'Coding Sequence', table = 'Standard'):
     """
     Given a series object with transcript information (i.e. row of the transcript dataframe), translate the coding sequence into an amino acid sequence, checking to make sure coding sequence is valid: If the coding sequence is not a multiple of 3, does not start with a start codon, or is not available, return np.nan for the amino acid sequence and specify the reason in the warnings list. Function intended for use with pandas apply on transcript dataframe.
 
@@ -770,43 +837,33 @@ def translate(row, coding_seq_col = 'Coding Sequence'):
     """
     #get coding sequence
     seq = row[coding_seq_col]
-    
     if seq is np.nan or seq is None:    #check if coding sequence is available
         row['Amino Acid Sequence'] = np.nan
-    elif len(seq) % 3 != 0 and seq[0:3] != 'ATG':   #check if sequence starts with start codon and is a multiple of 3
-        if row['Warnings'] != row['Warnings']:
-            row['Warnings'] = 'Start codon error (not ATG);Partial codon error'
+    else:
+        multiple_of_3 = len(seq) % 3 == 0 #check if sequence is multiple of 3
+        start_codon_present = seq[0:3] == 'ATG' #check if sequence starts with start codon
+        stop_codon_present = seq[-3:] in ['TAA', 'TAG', 'TGA']
+        if not multiple_of_3 or not start_codon_present or not stop_codon_present:
+            warnings = (not multiple_of_3)*'Partial codon error;'+(not start_codon_present)*'Start codon error (not ATG);'+(not stop_codon_present)*'Stop codon error;'
+            row['Warnings'] = warnings
             row['Amino Acid Sequence'] = np.nan
         else:
-            row['Warnings'] = row['Warnings'] + ';Start codon error (not ATG);Partial codon error'
-            row['Amino Acid Sequence'] = np.nan
-    elif len(seq) % 3 != 0:     #check if sequence is a multiple of 3 (no partial codons)
-        if row['Warnings'] != row['Warnings']:
-            row['Warnings'] = 'Partial codon error'
-            row['Amino Acid Sequence'] =np.nan
-        else:
-            row['Warnings'] = row['Warnings'] + ';Partial codon error'
-            row['Amino Acid Sequence'] = np.nan
-        #trim sequence explicitly? Currently will not translate
-    elif seq[0:3] != 'ATG':     #check if sequence starts with start codon
-        if row['Warnings'] != row['Warnings']:
-            row['Warnings'] = 'Start codon error (not ATG)'
-            row['Amino Acid Sequence'] = np.nan
-        else:
-            row['Warnings'] = row['Warnings'] + ';Start codon error (not ATG)'
-            row['Amino Acid Sequence'] = np.nan
-    else:      #if no other errors arise, translate sequence
-        row['Warnings'] = np.nan
-        #translate and save to row
-        coding_strand = Seq(seq)
-        aa_seq = str(coding_strand.translate(to_stop = True))
-        row['Amino Acid Sequence'] = aa_seq
+            row['Warnings'] = row['Warnings']
+            #translate and save to row
+            coding_strand = Seq(seq)
+            aa_seq = str(coding_strand.translate(table = table))
+            #remove last part of sequence, which will be the stop codon symbol (or possibly U, but should be stop codon)
+            aa_seq = aa_seq[:-1]
+            #replace X with U, if TAG is in seq
+            if 'TAG' in seq:
+                aa_seq = aa_seq.replace('X', 'U')
+            row['Amino Acid Sequence'] = aa_seq
         
     return row
     
 
 
-def get_ps_seq(row):
+def get_pscout_seq(row):
     """
     Given a series object containing a uniprot id associated with a transcript, get the amino acid sequence of the protein from ProteomeScout. Intended for use with pandas apply in getMatchedTranscripts() function
 
@@ -820,9 +877,42 @@ def get_ps_seq(row):
     seq: str
         Amino acid sequence associated with the UniProt ID, obtained from ProteomeScout
     """
-    uniprot_id = row['UniProtKB/Swiss-Prot ID']
-    seq = config.ps_api.get_sequence(uniprot_id)  # uses base Uniprot ID to get sequence without the isoform info
-    return seq
+    uniprot_id = row['UniProtKB isoform ID']
+    seq = config.ps_api.get_sequence(uniprot_id.replace('-','.'))  # try isoform id first to see if sequence is available
+    if seq == '-1':
+        #try general uniprot id to get sequence 
+        seq = config.ps_api.get_sequence(uniprot_id.split('-')[0])
+        if seq == '-1':
+            return np.nan
+        else:
+            return seq
+    else:
+        return seq
+
+
+def get_psp_seq(row, phosphosite):
+    """
+    Given a series object containing a uniprot id associated with a transcript, get the amino acid sequence of the protein from ProteomeScout.
+
+    Parameters
+    ----------
+    row: pandas.Series
+        contains UniProt ID under name 'UniProtKB/Swiss-Prot ID'
+
+    Returns
+    -------
+    seq: str
+        Amino acid sequence associated with the UniProt ID, obtained from ProteomeScout
+    """
+    uniprot_id = row['UniProtKB isoform ID']
+    iso_type = row['UniProt Isoform Type']
+    #check for isoform id sequence first
+    seq = utility.get_sequence_PhosphoSitePlus(uniprot_id, phosphosite)
+    
+    if isinstance(seq, int):
+        return np.nan
+    else:
+        return seq
     
 def get_uni_id(row):
     """
@@ -858,14 +948,14 @@ def get_gencode_seq(seq_align, transcripts):
     seq = []
     for i in seq_align.index:
         gen_id = seq_align.at[i,'Transcript stable ID']
-        try:
+        if gen_id in transcripts.index:
             seq.append(transcripts.loc[gen_id, 'Amino Acid Sequence'])
-        except KeyError:         
+        else:        
             seq.append(np.nan)
         
     return seq
        
-def perfect_align(row):
+def perfect_align(row, seq_col = 'PS Seq'):
     """
     Given a series object containing the amino acid sequence obtained from Ensembl information and from ProteomeScout, determine if the sequences match exactly. Intended for use with pandas apply in getMatchedTranscripts() function.
 
@@ -880,8 +970,10 @@ def perfect_align(row):
         Indicates if sequences match. True if the sequences match exactly, False if they do not match exactly
     """
     
-    u = row['PS Seq']
+    u = row[seq_col]
     v = row['GENCODE Seq']
     ans = u==v
     
     return ans
+
+    

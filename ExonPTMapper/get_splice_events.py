@@ -138,7 +138,7 @@ def mapTranscriptToProt(transcript_info, transcript_range):
         last amino acid in the region. These could be fractional values if start of transcript is in the middle of a codon
     """
     #can only calculate if coding sequence was mapped to transcript, check to make sure this is true
-    if transcript_info['Relative CDS Stop (bp)'] == 'error:no match found':
+    if transcript_info['Warnings'] == transcript_info['Warnings']:
         protein_region = 'No coding sequence'
     elif transcript_range[1] > int(transcript_info['Relative CDS Stop (bp)']):       #Check if the end of the transcript region occurs after the end of the coding sequence (and extends into noncoding region)
         if transcript_range[0] > int(transcript_info['Relative CDS Stop (bp)']):     #Check if the start of the transcript region occurs before the end of the coding sequence. If it doesn't, whole region is noncoding
@@ -318,6 +318,7 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
     """
     logger.info('Getting splice events relative to canonical isoform')
 
+    proteins = proteins[proteins['UniProt Isoform Type'] == 'Canonical']    
     print('Removing proteins for which the associated gene codes for multiple different proteins')
     #remove multi-protein genes from analysis
     proteins = filterOutMultiProteinGenes(proteins, genes)
@@ -327,8 +328,8 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
     print('Removing proteins with no alternative transcripts')
     #split up alternative transcripts into list
     original_protein_size = proteins.shape[0]
-    proteins = proteins.dropna(subset = 'Alternative Transcripts (All)')
-    proteins['Alternative Transcripts (All)'] = proteins['Alternative Transcripts (All)'].apply(lambda x: x.split(';'))
+    proteins = proteins.dropna(subset = 'Variant Transcripts')
+    proteins['Variant Transcripts'] = proteins['Variant Transcripts'].apply(lambda x: x.split(';'))
     logger.warning(f'{round(1 - proteins.shape[0]/original_protein_size)*100, 2}% of proteins have no alternative transcripts and were not considered in splice event analysis.')
     print('Done.\n')
     
@@ -341,7 +342,7 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
     #iterate through all proteins in proteins dataframe
     for prot in tqdm(proteins.index, desc = 'Getting splice events for each protein'):
         #identify canonical transcript ID. If multiple, iterate through all
-        canonical_trans = proteins.loc[prot, 'Canonical Transcripts']
+        canonical_trans = proteins.loc[prot, 'Associated Matched Transcripts']
         if isinstance(canonical_trans, str):
             #grab all transcripts associated with the canonical isoform AND that have information in transcripts dataframe
             canonical_trans_list = [trans for trans in canonical_trans.split(';') if trans in transcripts.index]
@@ -357,7 +358,7 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
                     strand = genes.loc[gene_id, 'Strand']
                     
                     #get alternative transcripts associated with canonical protein
-                    alternative_trans = proteins.loc[prot, 'Alternative Transcripts (All)']
+                    alternative_trans = proteins.loc[prot, 'Variant Transcripts']
                     #check to makes sure alternative transcripts exist/we have data for them
                     if len(alternative_trans) != 0:
                         for alt_trans in alternative_trans:
@@ -394,68 +395,64 @@ def identifySpliceEvents_All(exons, proteins, transcripts, genes, functional = F
                                             #check for different amino acid sequence
                                             #alt_seq = alt_exon['Exon AA Seq (Full Codon)']
                                             #can_seq = canonical_exons.loc[i,'Exon AA Seq (Full Codon)']
-                                            try:
-                                                #check if alternative and canonical exons have protein sequence info
+
+                                            #check if alternative and canonical exons have protein sequence info
+                                            alt_seq = alt_exon['Exon AA Seq (Full Codon)']
+                                            can_seq = canonical_exons.loc[i,'Exon AA Seq (Full Codon)']
+                                            if alt_seq != alt_seq: 
+                                                if alt_exon['Warnings (AA Seq)'] == "3' NCR" or alt_exon['Warnings (AA Seq)'] == "5' NCR": #if exon is now in noncoding region, indicate
+                                                    sevent[1] = 'No Difference, non-coding region'
+                                                    sevent[4] = 'loss'
+                                                else:   #otherwise there is missing information of some kind
+                                                    sevent[1] = 'No Difference, missing information for alternative transcript'
+                                                    sevent[4] = 'unclear'
+                                            elif can_seq != can_seq:
+                                                if canonical_exons.loc[i,'Warnings (AA Seq)'] == "3' NCR" or canonical_exons.loc[i,'Warnings (AA Seq)'] == "5' NCR": #if exon is now in noncoding region, indicate
+                                                    sevent[1] = 'No Difference, non-coding region'
+                                                    sevent[4] = 'loss'
+                                                else:   #otherwise there is missing information of some kind
+                                                    sevent[1] = 'No Difference, missing information for canonical transcript'
+                                                    sevent[4] = 'unclear'
+                                            else:
                                                 alt_seq = alt_exon['Exon AA Seq (Full Codon)']
                                                 can_seq = canonical_exons.loc[i,'Exon AA Seq (Full Codon)']
-                                                if alt_seq != alt_seq: 
-                                                    if alt_exon['Warnings (AA Seq)'] == "3' NCR" or alt_exon['Warnings (AA Seq)'] == "5' NCR": #if exon is now in noncoding region, indicate
-                                                        sevent[1] = 'No Difference, non-coding region'
-                                                        sevent[4] = 'loss'
-                                                    else:   #otherwise there is missing information of some kind
-                                                        sevent[1] = 'No Difference, missing information for alternative transcript'
-                                                        sevent[4] = 'unclear'
-                                                elif can_seq != can_seq:
-                                                    if canonical_exons.loc[i,'Warnings (AA Seq)'] == "3' NCR" or canonical_exons.loc[i,'Warnings (AA Seq)'] == "5' NCR": #if exon is now in noncoding region, indicate
-                                                        sevent[1] = 'No Difference, non-coding region'
-                                                        sevent[4] = 'loss'
-                                                    else:   #otherwise there is missing information of some kind
-                                                        sevent[1] = 'No Difference, missing information for canonical transcript'
-                                                        sevent[4] = 'unclear'
-                                                else:
-                                                    alt_seq = alt_exon['Exon AA Seq (Full Codon)']
-                                                    can_seq = canonical_exons.loc[i,'Exon AA Seq (Full Codon)']
-                                                    if alt_seq != can_seq:
-                                                        #check for partial match (different start or stop codon)
-                                                        if len(alt_seq) > len(can_seq):
-                                                            match = re.search(can_seq, alt_seq)
-                                                        elif len(can_seq) > len(alt_seq):
-                                                            match = re.search(alt_seq, can_seq)
-                                                            
-                                                        #if no match exists, check for frameshift or alternative start/stop sites
-                                                        if match is None:
-                                                            #get gene location found in both exons
-                                                            if strand == 1:
-                                                                start_loc = alt_exon['Exon Start (Gene)']
-                                                            else:
-                                                                start_loc = alt_exon['Exon End (Gene)']
-                                                            #calculate reading frame of canonical, based on shared loc
-                                                            can_frame = utility.checkFrame(canonical_exons.loc[i], transcripts.loc[canonical_trans], loc = start_loc, loc_type = 'Gene', strand = strand)
-                                                            #calcualte reading frame of alternative, based on shared loc
-                                                            alt_frame = utility.checkFrame(alt_exon, transcripts.loc[alt_trans], start_loc, loc_type = 'Gene', strand = strand)
-                                                            
-                                                            if alt_frame != can_frame:
-                                                                sevent[1] = 'Frame Shift'
-                                                                sevent[4] = 'unclear'
-                                                            else:
-                                                                sevent[1] = 'Mismatched, but no Frame Shift'
-                                                                sevent[4] = 'unclear'
+                                                if alt_seq != can_seq:
+                                                    #check for partial match (different start or stop codon)
+                                                    if len(alt_seq) > len(can_seq):
+                                                        match = re.search(can_seq, alt_seq)
+                                                    elif len(can_seq) > len(alt_seq):
+                                                        match = re.search(alt_seq, can_seq)
+                                                        
+                                                    #if no match exists, check for frameshift or alternative start/stop sites
+                                                    if match is None:
+                                                        #get gene location found in both exons
+                                                        if strand == 1:
+                                                            start_loc = alt_exon['Exon Start (Gene)']
                                                         else:
-                                                            matched_start = match.span()[0] == 0
-                                                            matched_stop = match.span()[1] == len(alt_seq)
-                                                            if not matched_start:
-                                                                sevent[1] = 'Alternative Start Codon'
-                                                                sevent[4] = 'unclear'
-                                                            elif not matched_stop:
-                                                                sevent[1] = 'Alternative Stop Codon'
-                                                                sevent[4] = 'unclear'
-                                                            else:
-                                                                sevent[1] = 'Partial AA match, but cause unclear'
-                                                                sevent[4] = 'unclear'
-                                            except Exception as e:
-                                                print(alt_seq)
-                                                print(can_seq)
-                                                traceback.print_exc()
+                                                            start_loc = alt_exon['Exon End (Gene)']
+                                                        #calculate reading frame of canonical, based on shared loc
+                                                        can_frame = utility.checkFrame(canonical_exons.loc[i], transcripts.loc[canonical_trans], loc = start_loc, loc_type = 'Gene', strand = strand)
+                                                        #calcualte reading frame of alternative, based on shared loc
+                                                        alt_frame = utility.checkFrame(alt_exon, transcripts.loc[alt_trans], start_loc, loc_type = 'Gene', strand = strand)
+                                                        
+                                                        if alt_frame != can_frame:
+                                                            sevent[1] = 'Frame Shift'
+                                                            sevent[4] = 'unclear'
+                                                        else:
+                                                            sevent[1] = 'Mismatched, but no Frame Shift'
+                                                            sevent[4] = 'unclear'
+                                                    else:
+                                                        matched_start = match.span()[0] == 0
+                                                        matched_stop = match.span()[1] == len(alt_seq)
+                                                        if not matched_start:
+                                                            sevent[1] = 'Alternative Start Codon'
+                                                            sevent[4] = 'unclear'
+                                                        elif not matched_stop:
+                                                            sevent[1] = 'Alternative Stop Codon'
+                                                            sevent[4] = 'unclear'
+                                                        else:
+                                                            sevent[1] = 'Partial AA match, but cause unclear'
+                                                            sevent[4] = 'unclear'
 
 
                                                 
@@ -489,9 +486,9 @@ def filterOutMultiProteinGenes(proteins, genes):
     #convert gene ids to protein ids
     multi_prot = []
     #remove nan values for uniprot id
-    trim_translator = config.translator.dropna(subset = 'UniProtKB/Swiss-Prot ID')
+    trim_translator = config.translator[config.translator['UniProt Isoform Type'] == 'Canonical']
     for gene in multi_genes:
-        prot_ids = list(trim_translator.loc[trim_translator['Gene stable ID'] == gene, 'UniProtKB/Swiss-Prot ID'].unique())
+        prot_ids = list(trim_translator.loc[trim_translator['Gene stable ID'] == gene, 'UniProtKB isoform ID'].unique())
         if len(prot_ids) > 0:
             #check to make sure protein id is in index (sometimes canonical protein not associated with a transcript and is not in dataframe)
             for ids in prot_ids:

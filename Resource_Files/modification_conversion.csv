@@ -1,0 +1,254 @@
+Modification,Residue,Modification Class,Mod Class Code
+(3R)-3-hydroxyasparagine,N,Hydroxylation,HYDR
+(3R)-3-hydroxyaspartate,D,Hydroxylation,HYDR
+"(3R,4R)-3,4-dihydroxyproline",P,Hydroxylation,HYDR
+"(3R,4R)-4,5-dihydroxyisoleucine",I,Hydroxylation,HYDR
+"(3R,4S)-3,4-dihydroxyproline",P,Hydroxylation,HYDR
+"(3R,4S)-4-hydroxyisoleucine",I,Hydroxylation,HYDR
+(3S)-3-hydroxyasparagine,N,Hydroxylation,HYDR
+(3S)-3-hydroxyaspartate,D,Hydroxylation,HYDR
+"(3S,4R)-3,4-dihydroxyisoleucine",I,Hydroxylation,HYDR
+"(4R)-4,5-dihydroxyleucine",L,Hydroxylation,HYDR
+(5R)-5-hydroxylysine,K,Hydroxylation,HYDR
+(5S)-5-hydroxylysine,K,Hydroxylation,HYDR
+"(Z)-2,3-didehydrotyrosine",Y,"(Z)-2,3-didehydrotyrosine",DHY
+1-thioglycine,G,Thioglycine,THIOG
+"2',4',5'-topaquinone",Y,"2',4',5'-topaquinone",TOPA
+2'-methylsulfonyltryptophan,W,Methylation,METH
+"2,3-didehydroalanine (Ser)",S,"2,3-didehydroalanine",DHAS
+"2,3-didehydrobutyrine",T,"2,3-didehydrobutyrine",DHB
+2-methylglutamine,Q,Methylation,METH
+2-oxobutanoic acid,T,2-oxobutanoic acid,OXOB
+"3',4'-dihydroxyphenylalanine",Y,Hydroxylation,HYDR
+"3,4-dihydroxyarginine",R,Hydroxylation,DIHYDR;HYDR
+"3,4-dihydroxyproline",P,Hydroxylation,DIHYDR;HYDR
+3-hydroxyasparagine,N,Hydroxylation,HYDR
+3-hydroxyaspartate,D,Hydroxylation,HYDR
+3-hydroxyhistidine,H,Hydroxylation,HYDR
+3-hydroxyphenylalanine,F,Hydroxylation,HYDR
+3-hydroxyproline,P,Hydroxylation,HYDR
+3-hydroxytryptophan,W,Hydroxylation,HYDR
+3-hydroxyvaline,V,Hydroxylation,HYDR
+3-methylthioaspartic acid,D,Beta-methylthiolation,BMTH
+3-oxoalanine (Cys),C,3-oxoalanine,OXOAC
+3-oxoalanine (Ser),S,3-oxoalanine (Ser),OXOAS
+3-phenyllactic acid,F,3-phenyllactic acid,FLAC
+"4,5,5'-trihydroxyleucine",L,Hydroxylation,HYDR
+"4,5-dihydroxylysine",K,Hydroxylation,DIHYDR;HYDR
+4-aspartylphosphate,D,Phosphorylation,PHOS
+4-carboxyglutamate,E,Carboxylation,GGLU
+4-hydroxyarginine,R,Hydroxylation,HYDR
+4-hydroxyglutamate,E,Hydroxylation,HYDR
+4-hydroxyproline,P,Hydroxylation,HYDR
+5-hydroxy-3-methylproline (Ile),I,Hydroxylation,HYDR
+5-hydroxylysine,K,Hydroxylation,HYDR
+5-methylarginine,R,Methylation,METH
+6'-bromotryptophan,W,Bromination,BROM
+7'-hydroxytryptophan,W,Hydroxylation,HYDR
+ADP-ribosylarginine,R,ADP Ribosylation,ADP
+ADP-ribosylasparagine,N,ADP Ribosylation,ADP
+ADP-ribosylation,"C, E, N, R, S",ADP Ribosylation,ADP
+ADP-ribosylcysteine,C,ADP Ribosylation,ADP
+ADP-ribosylserine,S,ADP Ribosylation,ADP
+Acetylation,"A, C, D, E, G, K, M, P, R, S, T, V, Y",Acetylation,ACET
+Alanine amide,A,Amidation,AMID
+Allysine,K,Allysine,ALLYS
+Amidation,"A, C, D, E, F, G, H, I, K, L, M, N, P, Q, R, S, T, V, W, Y",Amidation,AMID
+Arginine amide,R,Amidation,AMID
+Asparagine amide,N,Amidation,AMID
+Aspartic acid 1-amide,D,Amidation,AMID
+Asymmetric dimethylarginine,R,Dimethylation,DIMETH
+Beta-methylthiolation,D,Beta-methylthiolation,BMTH
+Bromination,"H, W",Bromination,BROM
+Bromohistidine,H,Bromination,BROM
+C-Glycosylation,W,Glycosylation,GLCN
+Cholesterol,G,Cholesterol,CHOL
+Cholesterol glycine ester,G,Cholesterol,CHOL
+"Cis-14-hydroxy-10,13-dioxo-7-heptadecenoic acid aspartate ester",D,"Cis-14-hydroxy-10,13-dioxo-7-heptadecenoic acid aspartate ester",CHDH
+Citrullination,R,Citrullination,CITR
+Citrulline,R,Citrullination,CITR
+Cysteine amide,C,Amidation,AMID
+Cysteine persulfide,C,Cysteine persulfide,CYSP
+Cysteine sulfenic acid (-SOH),C,Cysteine sulfenic acid,CSEA
+Cysteine sulfinic acid (-SO2H),C,Cysteine sulfinic acid,CSIA
+D-4-hydroxyvaline,V,Hydroxylation,HYDR
+Deamidated asparagine,N,Deamidation,DEAM
+Deamidated glutamine,Q,Deamidation,DEAM
+Deamidation,"N, Q",Deamidation,DEAM
+Deamidation followed by a methylation,Q,Deamidation followed by a methylation,DEAME
+Dihydroxylation,"K, P, R",Hydroxylation,DIHYDR
+Dimethylated arginine,", R",Dimethylation,DIMETH
+Dimethylation,", A, K, N, P, R, S",Dimethylation,DIMETH
+Diphthamide,H,Diphthamide,DIPH
+FAD,"C, H, Y",FAD,FAD
+FMN conjugation (Cys),C,FMN conjugation,FMNC
+FMN conjugation (His),H,FMN conjugation,FMNH
+FMN conjugation (Ser/Thr),"S, T",FMN conjugation (Ser/Thr),FMN
+Formylation,"G, K, M",Formylation,FORM
+Gamma-carboxyglutamic acid,E,Carboxylation,GGLU
+Geranyl-geranylation,C,Geranyl-geranylation,GERA
+Glutamate methyl ester (Gln),Q,Deamidation followed by a methylation,DEAME
+Glutamic acid 1-amide,E,Amidation,AMID
+Glutamine amide,Q,Amidation,AMID
+Glutathionylation,C,Glutathionylation,GLUT
+Glycine amide,G,Amidation,AMID
+Glycosylation,"N, S, T, W",Glycosylation,GLCN
+Histidine amide,H,Amidation,AMID
+Hydroxylation,"D, K, N, P, R, V, W, Y",Hydroxylation,HYDR
+Hydroxyproline,P,Hydroxylation,HYDR
+Hypusine,K,Hypusine,HYPU
+Isoleucine amide,I,Amidation,AMID
+Leucine amide,L,Amidation,AMID
+Lysine amide,K,Amidation,AMID
+Methionine amide,M,Amidation,AMID
+Methionine sulfone,M,Methionine sulfone,MSONE
+Methylation,"A, C, E, F, H, I, K, L, M, N, P, Q, R, S, T, Y",Methylation,METH
+Methylhistidine,H,Methylation,METH
+Myristoylation,"G, K",Myristoylation,MYRI
+"N,N,N-trimethylalanine",A,Trimethylation,METH;TRIMETH
+"N,N,N-trimethylserine",S,Methylation,METH
+"N,N-dimethylalanine",A,Dimethylation,DIMETH
+"N,N-dimethylleucine",L,Dimethylation,DIMETH
+"N,N-dimethylproline",P,Dimethylation,DIMETP;METH
+"N,N-dimethylserine",S,Dimethylation,DIMETH
+N-Glycosylation,N,Glycosylation,GLCN
+N-acetylalanine,A,Acetylation,ACET
+N-acetylaspartate,D,Acetylation,ACET
+N-acetylcysteine,C,Acetylation,ACET
+N-acetylglutamate,E,Acetylation,ACET
+N-acetylglycine,G,Acetylation,ACET
+N-acetylisoleucine,I,Acetylation,ACET
+N-acetylmethionine,M,Acetylation,ACET
+N-acetylproline,P,Acetylation,ACET
+N-acetylserine,S,Acetylation,ACET
+N-acetylthreonine,T,Acetylation,ACET
+N-acetyltyrosine,Y,Acetylation,ACET
+N-acetylvaline,V,Acetylation,ACET
+N-formylglycine,G,Formylation,FORM
+N-formylmethionine,M,Formylation,FORM
+N-methylalanine,A,Methylation,METH
+N-methylisoleucine,I,Methylation,METH
+N-methylleucine,L,Methylation,METH
+N-methylmethionine,M,Methylation,METH
+N-methylphenylalanine,F,Methylation,METH
+N-methylproline,P,Methylation,METH
+N-methylserine,S,Methylation,METH
+N-methyltyrosine,Y,Methylation,METH
+N-myristoyl glycine,G,Myristoylation,MYRI
+N-palmitoyl cysteine,C,Palmitoylation,PALM
+"N2,N2-dimethylarginine",R,Dimethylation,DIMETH
+N2-acetylarginine,R,Acetylation,ACET
+"N4,N4-dimethylasparagine",N,Dimethylation,DIMETH;METH
+N4-methylasparagine,N,Methylation,METH
+N5-methylarginine,R,Methylation,METH
+N5-methylglutamine,Q,Methylation,METH
+"N6,N6,N6-trimethyllysine",K,Trimethylation,METH;TRIMETH
+"N6,N6-dimethyllysine",K,Dimethylation,DIMETH;METH
+"N6-(3,6-diaminohexanoyl)-5-hydroxylysine",K,Hydroxylation,HYDR
+N6-(ADP-ribosyl)lysine,K,ADP Ribosylation,ADP
+N6-(pyridoxal phosphate)lysine,K,Pyridoxal phosphate,PLP
+N6-1-carboxyethyl lysine,K,Carboxylation,CETH
+N6-acetyllysine,K,Acetylation,ACET
+N6-biotinyllysine,K,Biotinylation,BIOT
+N6-formyllysine,K,Formylation,FORM
+N6-lipoyllysine,K,lipoylation,LIPY
+N6-methylated lysine,K,Trimethylation,METH;TRIMETH
+N6-methyllysine,K,Methylation,METH
+N6-myristoyl lysine,K,Myristoylation,MYRI
+N6-palmitoyl lysine,K,Palmitoylation,PALM
+N6-poly(methylaminopropyl)lysine,K,Methylation,METH;POLYM
+O-(pantetheine 4'-phosphoryl)serine,S,O-(pantetheine 4'-phosphoryl)serine,PPAN
+O-GalNAc Serine,S,Glycosylation,GLCN
+O-GalNAc Threonine,T,Glycosylation,GLCN
+O-GlcNAc Serine,S,Glycosylation,GLCN
+O-GlcNAc Threonine,T,Glycosylation,GLCN
+O-Glycosylation,"S, T",Glycosylation,GLCN
+O-acetylserine,S,Acetylation,ACET
+O-acetylthreonine,T,Acetylation,ACET
+O-decanoyl serine,S,Decanoate,DECA
+O-decanoyl threonine,T,Decanoate,DECA
+O-methylthreonine,T,Methylation,METH
+O-octanoyl serine,S,Octanoate,OCTA
+O-octanoyl threonine,T,Octanoate,OCTA
+O-palmitoyl serine,S,Palmitoylation,PALM
+O-palmitoyl threonine,T,Palmitoylation,PALM
+Omega-N-methylarginine,R,Methylation,METH
+Omega-N-methylated arginine,R,Dimethylation,DIMETH;METH
+Omega-hydroxyceramide glutamate ester,Q,Omega-hydroxyceramide glutamate ester,OHC
+Palmitoylation,"C, K, S, T",Palmitoylation,PALM
+Phenylalanine amide,F,Amidation,AMID
+Phosphatidylethanolamine amidated glycine,G,Phosphatidylethanolamine amidated glycine,PE
+Phosphoarginine,R,Phosphorylation,PHOS
+Phosphocysteine,C,Phosphorylation,PHOS
+Phosphohistidine,H,Phosphorylation,PHOS
+Phosphorylation,"C, D, H, R, S, T, Y",Phosphorylation,PHOS
+Phosphoserine,S,Phosphorylation,PHOS
+Phosphothreonine,T,Phosphorylation,PHOS
+Phosphotyrosine,Y,Phosphorylation,PHOS
+PolyADP-ribosyl glutamic acid,E,ADP Ribosylation,ADP
+Proline amide,P,Amidation,AMID
+Pros-methylhistidine,H,Methylation,METH
+Pros-phosphohistidine,H,Phosphorylation,PHOS
+Pupylation,K,Pupylation,PUP
+Pyrrolidone carboxylic acid,Q,Carboxylation,PYRR
+Pyrrolidone carboxylic acid (Glu),E,Carboxylation,PYRR
+Pyrrolidone carboxylic acid (Glu),E,Pyrrolidone carboxylic acid (Glu),PYRE
+Pyruvic acid (Cys),C,Pyruvic acid (Cys),PYRUC
+Pyruvic acid (Ser),S,Pyruvic acid,PYRUS
+S-12-hydroxyfarnesyl cysteine,C,S-12-hydroxyfarnesyl cysteine,FAR0
+S-4a-FMN cysteine,C,FMN conjugation,FMNC
+S-6-FMN cysteine,C,FMN conjugation,FMNC
+S-Nitrosylation,C,Nitrosylation,NTRY
+S-archaeol,C,S-archaeol,ARCH
+S-archaeol cysteine,C,S-archaeol,ARCH
+S-diacylglycerol cysteine,C,S-diacylglycerol cysteine,DIAC
+S-farnesyl cysteine,C,S-farnesyl cysteine,FARN
+S-geranylgeranyl cysteine,C,Geranyl-geranylation,GERA
+S-glutathionyl cysteine,C,Glutathionylation,GLUT
+S-methylcysteine,C,Methylation,METH
+S-nitrosocysteine,C,Nitrosylation,NTRY
+S-palmitoyl cysteine,C,Palmitoylation,PALM
+Serine amide,S,Amidation,AMID
+Sulfation,"S, T, Y",Sulfation,SULF
+Sulfoserine,S,Sulfation,SULF
+Sulfothreonine,T,Sulfation,SULF
+Sulfotyrosine,Y,Sulfation,SULF
+Sumoylation,K,Sumoylation,SUMO
+Symmetric dimethylarginine,R,Dimethylation,DIMETH
+Tele-8alpha-FMN histidine,H,FMN conjugation,FMNH
+Tele-methylhistidine,H,Methylation,METH
+Tele-phosphohistidine,H,Phosphorylation,PHOS
+Threonine amide,T,Amidation,AMID
+Thyroxine,Y,Thyroxine,THRX
+Triiodothyronine,Y,Triiodothyronine,THRN
+Trimethylation,"A, K, S",Trimethylation,TRIMETH
+Tryptophan amide,W,Amidation,AMID
+Tyrosine amide,Y,Amidation,AMID
+Ubiquitination,K,Ubiquitination,UBIQ
+Valine amide,V,Amidation,AMID
+n-Decanoate,"C, S, T",Decanoate,DECA
+n-Octanoate,"S, T",Octanoate,OCTA
+"N6,N6,N6-trimethyl-5-hydroxylysine",K,Trimethylation,METH;HYDR;TRIMETK
+N6-succinyllysine,K,Succinylation,SUCC
+Cysteine methyl ester,C,Methylation,METH
+Nitrated tyrosine,Y,Nitration,NITR
+5-glutamyl polyglutamate,E,Glutamylation,GLTM
+S-8alpha-FAD cysteine,C,FAD,FAD
+Aspartate 1-(chondroitin 4-sulfate)-ester,D,1-(chondroitin 4-sulfate)-ester,CH4S
+N6-malonyllysine,K,Malonylation,MALO
+Methionine sulfoxide,M,Sulfoxide,SOXID
+S-(dipyrrolylmethanemethyl)cysteine,C,Dipyrrolylmethanemethyl,DPMM
+N-pyruvate 2-iminyl-valine,V,Pyruvate 2-iminyl,PYRV
+O-(2-cholinephosphoryl)serine,S,Cholinephosphoryl,CHPH
+Leucine methyl ester,L,Methylation,METH
+Tele-8alpha-FAD histidine,H,FAD,FAD
+Cysteine derivative,C,Cystein derivative,CYSDER
+O-AMP-tyrosine,Y,AMP,AMP
+N6-carboxylysine,K,Carboxylation,CARB
+S-cysteinyl cysteine,C,Cysteinyl,CYST
+5-glutamyl glycerylphosphorylethanolamine,E,Glycerylphosphorylethanolamine,GLPE
+O-AMP-threonine,T,AMP,AMP
+N6-crotonyl-L-lysine,K,Crotonylation,CROT
+Blocked amino end (Thr),T,Blocked amino end,BLOCK
+Blocked amino end (Ser),S,Blocked amino end,BLOCK
+Glycyl adenylate,G,Adenylate,ADEN
