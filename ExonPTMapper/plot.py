@@ -28,8 +28,43 @@ class plotter:
         """
         #load necessary data
         self.load_plotter()
+
+    def get_gene_specific_transcripts(self, id, id_type = 'Gene Name', transcript_subset = None):
+        """
+        Given gene name, gene id, or transcript id, return all transcripts associated with that gene. If transcript_subset is provided, will only return transcripts in that subset.
+        """
+                #get gene specific transcripts
+        if id_type == 'Gene ID':
+            gene_id = id
+            gene_exons = self.exons[self.exons['Gene stable ID'] == id]
+            if gene_exons.shape[0] == 0:
+                raise ValueError(f'ID ({id_type}) not found in dataset')
+        elif id_type == 'Gene Name':
+            gene = self.genes[self.genes['Gene name'] == id]
+            if gene.shape[0] == 0:
+                raise ValueError(f'ID ({id_type}) not found in dataset')
+            gene_id = gene.index.values[0]
+            gene = self.genes.loc[gene_id]
+            gene_exons = self.exons[self.exons['Gene stable ID'] == gene_id]
+            if gene_exons.shape[0] == 0:
+                raise ValueError('No exons found associated with that gene')
+        elif id_type == 'Transcript ID':
+            gene_id = self.transcripts.loc[id, 'Gene stable ID']
+            gene = self.genes.loc[gene_id]
+            gene_exons = self.exons[self.exons['Gene stable ID'] == gene_id]
+        else:
+            raise ValueError('No gene or transcript indicate. Please provide gene_id, gene_name, or transcript_id')
         
-    def plotTranscripts(self, id, id_type = 'Gene Name', fig_width = 15, functional_threshold = 0, sort_by_function = True, coding_color = 'red', noncoding_color = 'white', add_ptms = False, ax = None):
+        
+        #get relevant transcripts
+        transcript_ids = gene_exons['Transcript stable ID'].unique()
+        if transcript_subset is not None:
+            transcript_ids = list(set(transcript_ids).intersection(set(transcript_subset)))
+            
+        tmp_trans = self.transcripts.loc[transcript_ids]
+        return gene, gene_exons, tmp_trans, gene_id
+        
+    def plotTranscripts(self, id, id_type = 'Gene Name', fig_width = 15, functional_threshold = 0, transcript_subset = None, sort_by_function = True, coding_color = 'red', noncoding_color = 'white', add_ptms = False, ax = None):
         """
         Given a gene ID, plot all transcripts associated with a given gene. Coding regions are highlighted, by default, in red, and noncoding regions are white. Exons always appear in rank order/direction of translation, even if transcripts are on the reverse strand.
         
@@ -58,33 +93,10 @@ class plotter:
             figure containing all transcripts plotted
 
         """
+            
+        gene, gene_exons, tmp_trans, gene_id = self.get_gene_specific_transcripts(id, id_type, transcript_subset)
 
-        #get gene specific transcripts
-        if id_type == 'Gene ID':
-            gene_id = id
-            gene_exons = self.exons[self.exons['Gene stable ID'] == id]
-            if gene_exons.shape[0] == 0:
-                raise ValueError(f'ID ({id_type}) not found in dataset')
-        elif id_type == 'Gene Name':
-            gene = self.genes[self.genes['Gene name'] == id]
-            if gene.shape[0] == 0:
-                raise ValueError(f'ID ({id_type}) not found in dataset')
-            gene_id = gene.index.values[0]
-            gene = self.genes.loc[gene_id]
-            gene_exons = self.exons[self.exons['Gene stable ID'] == gene_id]
-            if gene_exons.shape[0] == 0:
-                raise ValueError('No exons found associated with that gene')
-        elif id_type == 'Transcript ID':
-            gene_id = self.transcripts.loc[id, 'Gene stable ID']
-            gene = self.genes.loc[gene_id]
-            gene_exons = self.exons[self.exons['Gene stable ID'] == gene_id]
-        else:
-            raise ValueError('No gene or transcript indicate. Please provide gene_id, gene_name, or transcript_id')
-        
-        
-        #get relevant transcripts
-        transcript_ids = gene_exons['Transcript stable ID'].unique()
-        tmp_trans = self.transcripts.loc[transcript_ids]
+
 
         #remove transcripts with missing coding information
         tmp_trans['Relative CDS Start (bp)'] = pd.to_numeric(tmp_trans['Relative CDS Start (bp)'], errors = 'coerce')
@@ -115,7 +127,7 @@ class plotter:
         row = 1
         for tid in transcript_ids:
             #check whether transcript is canonical or alternative uniprot isoform
-            if config.translator.loc[config.translator['Transcript stable ID'] == tid, 'Uniprot Canonical'].values[0] == 'Canonical':
+            if config.translator.loc[config.translator['Transcript stable ID'] == tid, 'UniProt Isoform Type'].values[0] == 'Canonical':
                 trans_type = '(canonical)'
             else:
                 trans_type = '(alternative)'
@@ -175,31 +187,31 @@ class plotter:
             #isolate relevant ptms
             ptms_in_region = self.ptm_coordinates[self.ptm_coordinates['Chromosome/scaffold name'] == gene['Chromosome/scaffold name']]
             ptms_in_region = ptms_in_region[ptms_in_region['Strand'] == gene['Strand']]
-            ptms_in_region = ptms_in_region[(ptms_in_region['Gene Location (NC)'] >= gene['Gene start (bp)']) & (ptms_in_region['Gene Location (NC)'] <= gene['Gene end (bp)'])]
+            ptms_in_region = ptms_in_region[(ptms_in_region['Gene Location (hg38)'] >= gene['Gene start (bp)']) & (ptms_in_region['Gene Location (hg38)'] <= gene['Gene end (bp)'])]
             #add ptms to plot
             if isinstance(add_ptms, list):
                 for ptm in add_ptms:
-                    loc = ptms_in_region.loc[ptms_in_region['Source of PTM'] == ptm, 'Gene Location (NC)'].values[0]
-                    mod_type = ptms_in_region.loc[ptms_in_region['Source of PTM'] == ptm, 'Modifications'].values[0]
-                    if 'Phospho' in mod_type:
+                    loc = ptms_in_region.loc[ptms_in_region['Source of PTM'] == ptm, 'Gene Location (hg38)'].values[0]
+                    mod_type = ptms_in_region.loc[ptms_in_region['Source of PTM'] == ptm, 'Modification Class'].values
+                    if 'Phosphorylation' in mod_type:
                         color = 'gold'
-                    elif 'Glyco' in mod_type:
+                    elif 'Glycosylation' in mod_type:
                         color = 'lightpink'
-                    elif 'Methyl' in mod_type or 'methyl' in mod_type:
+                    elif 'Methylation' in mod_type or 'methyl' in mod_type:
                         color = 'lightblue'
                     elif 'Ubiquitination' in mod_type:
                         color = 'orange'
-                    elif 'Acetyl' in mod_type or 'acetyl' in mod_type:
+                    elif 'Acetylation' in mod_type or 'acetyl' in mod_type:
                         color = 'lightgreen'
-                    elif 'Sumo' in mod_type:
+                    elif 'Sumoylation' in mod_type:
                         color = 'brown'
                     else:
                         color = 'lightgrey'
                     ax.axvline(loc, c = color, lw = 0.5, zorder = 10)
             else:
                 for i,row in ptms_in_region.iterrows():
-                    loc = row['Gene Location (NC)']
-                    mod_type = row['Modifications']
+                    loc = row['Gene Location (hg38)']
+                    mod_type = row['Modification Class']
                     if 'Phospho' in mod_type:
                         color = 'gold'
                     elif 'Glyco' in mod_type:
@@ -217,16 +229,16 @@ class plotter:
                     ax.axvline(loc, c = color, lw = 0.5, zorder = 10)
         #return fig
 
-    def plotCanonical(self, gene_name, show_domains = False, ax = None):
+    def plotCanonical(self, gene_name, show_domains = False, ax = None, xaxis_scale = 'Protein'):
         prot_id = config.translator[config.translator['Gene name'] == gene_name].dropna(subset = 'UniProtKB/Swiss-Prot ID')['UniProtKB/Swiss-Prot ID'].values[0]
         
         #get exon/transcript information
-        translator = config.translator.loc[config.translator['Gene name'] == gene_name, ['Gene name', 'Transcript stable ID', 'UniProtKB/Swiss-Prot ID', 'Uniprot Canonical']].drop_duplicates()
-        translator = translator[translator['Uniprot Canonical'] == 'Canonical']
+        translator = config.translator.loc[config.translator['Gene name'] == gene_name, ['Gene name', 'Transcript stable ID', 'UniProtKB/Swiss-Prot ID', 'UniProtKB isoform ID', 'UniProt Isoform Type']].drop_duplicates()
+        translator = translator[translator['UniProt Isoform Type'] == 'Canonical']
         
         transcript_id = translator['Transcript stable ID'].values[0]
-        exons = plotter.exons[plotter.exons['Transcript stable ID'] == transcript_id]
-        transcript = plotter.transcripts.loc[transcript_id]
+        exons = self.exons[self.exons['Transcript stable ID'] == transcript_id]
+        transcript = self.transcripts.loc[transcript_id]
         
         #set up figure
         if ax is None:
@@ -236,18 +248,21 @@ class plotter:
         cds_start = int(transcript['Relative CDS Start (bp)'])
         for i, row in exons.iterrows():   
             color = 'blue' if row['Constitutive exon'] == 1 else 'gray'
-            start = (row['Exon Start (Transcript)'] - cds_start)/3 + 1
-            stop = (row['Exon End (Transcript)'] - cds_start)/3 + 1
+            if xaxis_scale == 'Protein':
+                start = (row['Exon Start (Transcript)'] - cds_start)/3 + 1
+                stop = (row['Exon End (Transcript)'] - cds_start)/3 + 1
+            else:
+                start = row['Exon Start (Transcript)']
+                stop = row['Exon End (Transcript)']
             rect = patches.Rectangle((start, 0.1), stop - start, 0.4, facecolor = color, edgecolor = 'black', zorder = 3)
             ax.add_patch(rect)
 
         #add ptms onto plot
-        ptms = plotter.ptm_info[plotter.ptm_info['Protein'] == translator['UniProtKB/Swiss-Prot ID'].values[0]].copy()
+        ptms = self.ptm_info[self.ptm_info['Protein'] == translator['UniProtKB isoform ID'].values[0]].copy()
         #restrict to the transcript of interest
         ptm_transcripts = ptms.iloc[0]['Transcripts'].split(';')
         if len(ptm_transcripts) > 1:
             for trans, i in zip(ptm_transcripts, range(len(ptm_transcripts))):
-                print(trans)
                 if trans == transcript_id:
                     correct_transid_loc = i
                     break
@@ -257,15 +272,33 @@ class plotter:
         #add ptms: color based on whether it is constitutive or non-constitutive
         for i, row in ptms.iterrows():
             color = 'blue' if row['PTM Conservation Score'] == 1 else 'red'
-            ax.plot([int(row['PTM Location (AA)']), int(row['PTM Location (AA)'])], [0.5,0.82], color = color, linestyle = '-', zorder = 2)
+            if xaxis_scale == 'Protein':
+                ptm_loc = int(row['PTM Location (AA)'])
+            else:
+                ptm_loc = int(row['PTM Location (AA)']*3+cds_start)
+            ax.plot([ptm_loc, ptm_loc], [0.5,0.7], color = color, linestyle = '-', zorder = 2)
             
         #remove y-axis, set left, top, and right spines to invisible
         ax.spines['left'].set_visible(False)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.get_yaxis().set_visible(False)
-        ax.set_xlabel('Protein Position (AA)')
-        ticks = ax.set_xticks(np.arange(1, len(transcript['Amino Acid Sequence']), int(len(transcript['Amino Acid Sequence'])/5)))
+
+        #set ticks to be at boundaries
+        if xaxis_scale == 'Protein':
+            cuts = [(int(c) - cds_start)/3 + 1 for c in transcript['Exon cuts'].split(',')]
+            ax.set_xlabel('Protein Position (AA)')
+        else:
+            cuts = [int(c) for c in transcript['Exon cuts'].split(',')]
+            ax.set_xlabel('Transcript Cuts (bp)')
+            
+        ax.set_xticks(cuts)
+        ax.tick_params(rotation = 90, labelsize = 7)
+
+        #set title to be transcript
+        ax.set_title(f'{gene_name}:{transcript.name}')
+
+        #ticks = ax.set_xticks(np.arange(1, len(transcript['Amino Acid Sequence']), int(len(transcript['Amino Acid Sequence'])/5)))
         
         if show_domains:
             domains = config.ps_api.get_domains(prot_id, domain_type='uniprot')
@@ -274,13 +307,14 @@ class plotter:
             for d in domains:
                 start = int(d[1])
                 stop = int(d[2])
-                rect = patches.Rectangle((start, 0.6), stop - start, 0.4, facecolor = 'lightblue', edgecolor = 'black', zorder = 3)
+                rect = patches.Rectangle((start, 0.8), stop - start, 0.3, facecolor = 'lightblue', edgecolor = 'black', zorder = 3)
                 ax.add_patch(rect)
 
                 #add domain label
-                ax.annotate(d[0].replace(' ', '\n'), (start + (stop - start)/2, 0.8), ha = 'center', va = 'center')
+                ax.annotate(d[0].replace(' ', '\n'), (start + (stop - start)/2, 0.9), ha = 'center', va = 'center')
 
         return ax
+
             
         
     def annotateProteinSequence(self, protein_id = None, gene_name = None,include_exons = True,include_domains = False, num_aa_per_row = 100, figwidth = 20):
@@ -295,7 +329,7 @@ class plotter:
                 
         elif gene_name is not None:
             transcripts = self.genes.loc[self.genes['Gene name'] == gene_name, 'Protein coding transcripts']
-            canonicals = config.translator[config.translator['Uniprot Canonical'] == 'Canonical']
+            canonicals = config.translator[config.translator['Uniprot Isoform Type'] == 'Canonical']
             if transcripts.shape[0] > 0:
                 transcripts = transcripts.values[0].split(',')
                 for trans in transcripts:

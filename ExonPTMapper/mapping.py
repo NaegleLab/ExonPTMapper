@@ -229,16 +229,12 @@ class PTM_mapper:
 
     
         
-<<<<<<< HEAD
     #    return pd.Series(data = [gene_codon_start, PTM_start, exon_codon_start, exon_aa_start, exon_id, exon_rank, nterm_distance, cterm_distance, min_distance, ragged],
     #                    index = ['Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon Location (AA)', 'Exon stable ID', 'Exon rank in transcript', 'Distance to N-terminal Splice Boundary (NC)', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to Closest Boundary (NC)', 'Ragged'],
     #                    name = ptm)
                         
         
     def mapPTMs_all(self):
-=======
-    def mapPTMs_all(self, restart = False, PROCESSES = 1):
->>>>>>> main
         """
         For all ptms in ptm_info, map to their respective exon and their location in the genome. Will also create a genomic coordinate specific dataframe called ptm_coordinates which will be used for mapping modifications onto alternative transcripts 
 
@@ -405,11 +401,7 @@ class PTM_mapper:
         print('Constructing ptm coordinates dataframe')
         logger.info('Constructing ptm coordinates dataframe')
         #save new dataframe which will be trimmed version of ptm info with each row containing a PTM mapped to unique genomic coordinates
-<<<<<<< HEAD
         ptm_coordinates = ptm_info[['Genomic Coordinates', 'PTM','Residue', 'Modification', 'Modification Class','Flanking Sequence', 'Chromosome/scaffold name', 'Strand','Gene Location (NC)', 'Ragged', 'Ragged Genomic Location', 'Exon stable ID', 'Gene name']].copy()
-=======
-        ptm_coordinates = ptm_info[['Genomic Coordinates', 'PTM','Residue', 'Modification', 'Modification Class', 'Chromosome/scaffold name', 'Strand','Gene Location (NC)', 'Ragged', 'Ragged Genomic Location', 'Exon stable ID', 'Gene name']].copy()
->>>>>>> main
         ptm_coordinates = ptm_coordinates.dropna(subset = 'Gene Location (NC)')
         ptm_coordinates = ptm_coordinates.drop_duplicates()
         ptm_coordinates = ptm_coordinates.astype({'Gene Location (NC)': int, 'Strand':int, 'Ragged':bool})
@@ -418,20 +410,13 @@ class PTM_mapper:
 
         #group modifications for the same ptm in the same row
         grouped = ptm_coordinates.groupby(['Genomic Coordinates', 'Chromosome/scaffold name', 'Residue', 'Strand', 'Gene Location (NC)', 'Ragged'])
-<<<<<<< HEAD
         ptm_coordinates = pd.concat([grouped['PTM'].agg(utility.join_unique_entries), grouped['Flanking Sequence'].agg(utility.join_unique_entries), grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(utility.join_unique_entries), grouped['Modification Class'].agg(utility.join_unique_entries), grouped['Exon stable ID'].agg(utility.join_unique_entries), grouped['Gene name'].agg(utility.join_unique_entries)], axis = 1)
         ptm_coordinates = ptm_coordinates.reset_index()
         ptm_coordinates = ptm_coordinates.rename({'PTM':'Source of PTM', 'Exon stable ID': 'Source Exons', 'Gene Location (NC)':'Gene Location (hg38)', 'Flanking Sequence':'Canonical Flanking Sequence'}, axis = 1)
-=======
-        ptm_coordinates = pd.concat([grouped['PTM'].agg(utility.join_unique_entries), grouped['Ragged Genomic Location'].apply(lambda x: np.unique(x)[0]), grouped['Modification'].agg(utility.join_unique_entries), grouped['Modification Class'].agg(utility.join_unique_entries), grouped['Exon stable ID'].agg(utility.join_unique_entries), grouped['Gene name'].agg(utility.join_unique_entries)], axis = 1)
-        ptm_coordinates = ptm_coordinates.reset_index()
-        ptm_coordinates = ptm_coordinates.rename({'PTM':'Source of PTM', 'Exon stable ID': 'Source Exons', 'Gene Location (NC)':'Gene Location (hg38)'}, axis = 1)
->>>>>>> main
 
         #annotate with ptm position in canonical isoform
         ptm_coordinates['UniProtKB Accession'] = ptm_coordinates['Source of PTM'].apply(lambda x: x.split(';'))
         ptm_coordinates['Residue'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: x[0].split('_')[1][0])
-<<<<<<< HEAD
 
         #get location of PTM in canonical isoform, if found in canonical isoform
         ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: [ptm.split('_')[1][1:] for ptm in x if ptm.split('_')[0] in config.canonical_isoIDs.values()])
@@ -447,37 +432,17 @@ class PTM_mapper:
 
         #set non-isoform specific Uniprot ID
         #ptm_coordinates['UniProtKB Accession'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: ';'.join([ptm.split('-')[0] for ptm in x]))
-=======
-        ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: [ptm.split('_')[1][1:] for ptm in x if ptm.split('_')[0] in config.canonical_isoIDs.values()])
-        ptm_coordinates['PTM Position in Canonical Isoform'] = ptm_coordinates['PTM Position in Canonical Isoform'].apply(lambda x: ';'.join(x) if len(x) > 0 else np.nan)
-        ptm_coordinates['UniProtKB Accession'] = ptm_coordinates['UniProtKB Accession'].apply(lambda x: ';'.join(np.unique([ptm.split('-')[0] for ptm in x])))
->>>>>>> main
 
 
 
         #make genomic coordinates the index of dataframe
         ptm_coordinates = ptm_coordinates.set_index('Genomic Coordinates')
-<<<<<<< HEAD
 
         #reorder column names
         ptm_coordinates = ptm_coordinates[['Gene name', 'UniProtKB Accession', 'Residue', 'PTM Position in Canonical Isoform', 'Modification', 'Modification Class', 'Canonical Flanking Sequence', 'Chromosome/scaffold name', 'Strand', 'Gene Location (hg38)', 'Ragged', 'Ragged Genomic Location', 'Source Exons', 'Source of PTM', 'Found in Canonical']]
 
 
 
-=======
-
-        #reorder column names
-        ptm_coordinates = ptm_coordinates[['Gene name', 'UniProtKB Accession', 'Residue', 'PTM Position in Canonical Isoform', 'Modification', 'Modification Class', 'Chromosome/scaffold name', 'Strand', 'Gene Location (hg38)', 'Ragged', 'Ragged Genomic Location', 'Source Exons', 'Source of PTM']]
-
-
-        #get coordinates in the hg19 version of ensembl using hg38 information using pyliftover
-        #hg19_coords = []
-        #liftover_object = pyliftover.LiftOver('hg38','hg19')
-        #for i, row in tqdm(ptm_coordinates.iterrows(), total = ptm_coordinates.shape[0], desc = 'Converting from hg38 to hg19 coordinates'):
-        #    hg19_coords.append(convertToHG19(row['Gene Location (hg38)'], row['Chromosome/scaffold name'], row['Strand'], liftover_object = liftover_object))
-        #ptm_coordinates['HG19 Location'] = hg19_coords
-        #ptm_coordinates = ptm_coordinates.drop_duplicates()
->>>>>>> main
         
         self.ptm_coordinates = ptm_coordinates.copy()
         
@@ -500,7 +465,6 @@ class PTM_mapper:
     def add_new_coordinate_type(self, to_type = 'hg19'):
         #get coordinates in the hg19 version of ensembl using hg38 information using pyliftover
         new_coords = []
-<<<<<<< HEAD
         if to_type == 'hg19' or (to_type == 'hg18' and 'Gene Location (hg19)' not in self.ptm_coordinates.columns.values):
             liftover_object = pyliftover.LiftOver('hg38',to_type)
             for i, row in tqdm(self.ptm_coordinates.iterrows(), total = self.ptm_coordinates.shape[0], desc = 'Converting from hg38 to hg19 coordinates'):
@@ -514,14 +478,6 @@ class PTM_mapper:
             self.ptm_coordinates[f'Gene Location ({to_type})'] = new_coords
 
 
-=======
-        if to_type == 'hg19':
-            liftover_object = pyliftover.LiftOver('hg38',to_type)
-            for i, row in tqdm(self.ptm_coordinates.iterrows(), total = self.ptm_coordinates.shape[0], desc = 'Converting from hg38 to hg19 coordinates'):
-                new_coords.append(convertToHG19(row['Gene Location (hg38)'], row['Chromosome/scaffold name'], row['Strand'], liftover_object = liftover_object))
-
-        self.ptm_coordinates[f'Gene Location ({to_type})'] = new_coords
->>>>>>> main
 
             
     def explode_PTMinfo(self, explode_cols = ['Transcripts', 'Gene Location (NC)', 'Transcript Location (NC)', 'Exon Location (NC)', 'Exon stable ID', 'Exon rank in transcript', 'Exon Location (AA)', 'Distance to C-terminal Splice Boundary (NC)', 'Distance to N-terminal Splice Boundary (NC)']):
@@ -2045,9 +2001,8 @@ def getGapMaps(aln, exon_id, reverse = False):
     return align_map
 
     
-
 def run_mapping(phosphositeplus_file = None, restart_all = False, restart_mapping = False, exon_sequences_fname = 'exon_sequences.fasta.gz',
-                coding_sequences_fname = 'coding_sequences.fasta.gz', trifid_fname = 'APPRIS_functionalscores.txt'):
+                coding_sequences_fname = 'coding_sequences.fasta.gz', trifid_fname = 'APPRIS_functionalscores.txt', uniprot_isoform_fasta = None, uniprot_swissprot_fasta = None):
     
     """
     Run the complete mapping process, starting from downloading data from Ensembl, all the way to mapping PTMs to alternative exons. Will only run steps that have not already been completed (based on data downloaded from processed_data_dir), unless either restart_all (repeat all steps) or restart_mapping (repeat mapping steps but not processing of ensemble data) are set to True. 
@@ -2107,7 +2062,24 @@ def run_mapping(phosphositeplus_file = None, restart_all = False, restart_mappin
             mapper.transcripts = processing.processTranscripts(mapper.transcripts, coding_sequences, mapper.exons)
         print('saving\n')
         mapper.transcripts.to_csv(config.processed_data_dir + 'transcripts.csv')
+
+    if 'UniProtKB isoform ID' not in config.translator.columns:
+        ## update isoform information
+        print('Matching transcripts to uniprot isoforms')
+        if uniprot_swissprot_fasta is None:
+            ftp_url = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz"
+            swissprot_seqs = utility.download_and_process_uniprot_fasta(ftp_url)
+        else:
+            swissprot_seqs = utility.process_UniProt_fasta(uniprot_swissprot_fasta)
+
+        if uniprot_isoform_fasta is None:
+            ftp_url = "https://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot_varsplic.fasta.gz"
+            isoform_seqs = utility.download_and_process_uniprot_fasta(ftp_url)
+        else:
+            isoform_seqs = utility.process_UniProt_fasta(uniprot_isoform_fasta)
             
+        processing.match_all_isoforms(mapper.transcripts, isoform_seqs=isoform_seqs, swissprot_seqs=swissprot_seqs)
+
     #get protein sequence associated with each exon
     if 'Exon AA Seq (Full Codon)' not in mapper.exons.columns or restart_all:
         print('Getting exon-specific amino acid sequence\n')

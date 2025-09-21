@@ -26,7 +26,7 @@ logger.addHandler(handler)
 def downloadMetaInformation(gene_attributes = ['ensembl_gene_id','external_gene_name', 'strand','start_position','end_position', 'chromosome_name', 'uniprotswissprot'],
                             transcript_attributes = ['ensembl_gene_id','ensembl_transcript_id','transcript_length','transcript_appris', 'transcript_is_canonical','transcript_tsl', 'transcript_gencode_basic'],
                             exon_attributes = ['ensembl_gene_id', 'ensembl_transcript_id', 'ensembl_exon_id', 'is_constitutive','rank','exon_chrom_start', 'exon_chrom_end'],
-                            filters = {'transcript_biotype':'protein_coding', 'chromosome_name': ['X', 'Y', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11','12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22','MT']}):
+                            filters = {'transcript_gencode_basic':True, 'chromosome_name': ['X', 'Y', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11','12', '13', '14', '15', '16', '17', '18', '19', '20', '21', '22','MT']}):
     """
     Using pybiomart, download basic information for all protein-coding genes, transcripts, and exons. Will both save the dataframes to the processed_data_dir and return them as a tuple.
 
@@ -278,6 +278,54 @@ def processTranscripts(transcripts, coding_seqs, exons, APPRIS = None):
         logger.warning(f'Size of transcripts dataframe changed during processing. Initial size was {initial_transcript_shape}, final size is {transcripts.shape[0]}. Removing any duplicate rows, but proceed with caution')
     
     return transcripts
+
+def get_isoform_id(transcripts, transcript_id, swissprot_id, isoform_seqs, canonical_seqs):
+    
+        #get amino acid sequence associated with transcript
+    if transcript_id not in transcripts.index:
+        return np.nan
+    
+    
+    trans_seq = transcripts.loc[transcript_id, 'Amino Acid Sequence']
+
+    #check canonical sequence first
+    swissprot_seq = canonical_seqs[swissprot_id]
+    if trans_seq == swissprot_seq:
+        isoform_id = canonical_isoIDs[swissprot_id]
+        return isoform_id
+    elif all_isoforms[swissprot_id] == all_isoforms[swissprot_id]:
+        #check isoforms
+        isoforms = all_isoforms[swissprot_id]
+        for iso in isoforms:
+            if iso != canonical_isoIDs[swissprot_id] and iso in isoform_seqs:
+                #start with canonical sequence
+                uniprot_seq = isoform_seqs[iso]
+                #check if sequence matches
+                if trans_seq == uniprot_seq:
+                    return iso
+        return np.nan
+    else:
+        return np.nan
+    
+def match_all_isoforms(transcripts, isoform_seqs, swissprot_seqs):
+    #extract only unique transcript/swiss-prot pairs
+    trim_translator = config.translator[['Transcript stable ID', 'UniProtKB/Swiss-Prot ID']].dropna().drop_duplicates()
+
+    #iterate through transcripts and identify the matching isoform seq
+    iso_match = {}
+    for index, row in trim_translator.iterrows():
+        transcript_id = row['Transcript stable ID']
+        swissprot_id = row['UniProtKB/Swiss-Prot ID']
+        #if swissprot id is not null, find if transcript seq matches specific isoform
+        if swissprot_id == swissprot_id:
+            isoform_id = get_isoform_id(transcripts, transcript_id, swissprot_id, isoform_seqs = isoform_seqs, canonical_seqs = swissprot_seqs)
+            iso_match[transcript_id] = isoform_id
+        else:
+            iso_match[transcript_id] = np.nan
+
+    #update translator dataframe
+    config.translator['UniProtKB isoform ID'] = config.translator['Transcript stable ID'].map(iso_match)
+    return iso_match
 
 def getIsoformInfo(transcripts):
     """

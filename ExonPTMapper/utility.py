@@ -3,9 +3,12 @@ import gzip
 import numpy as np
 import warnings
 import re
+from io import BytesIO
 from Bio import SeqIO
 from Bio.Data import CodonTable
 import pybiomart
+from tqdm import tqdm
+
 from ExonPTMapper import config
 
 
@@ -46,13 +49,10 @@ def create_custom_codon_table():
     return custom_table
 
 
-def download_translator(logger, canonical_isoIDs = None):
+def download_translator(logger):
     """
     Download information from biomart to convert between database IDs
     """
-    if canonical_isoIDs is None:
-        canonical_isoIDs = config.canonical_isoIDs
-
     chromosomes = ['X', '20', '1', '6', '3', '7', '12', '11', '4', '17', '2', '16',
        '8', '19', '9', '13', '14', '5', '22', '10', 'Y', '18', '15', '21',
        'MT']
@@ -63,17 +63,17 @@ def download_translator(logger, canonical_isoIDs = None):
     
     #load ID data that relates Ensembl to UniProt
     translator = dataset.query(attributes=['ensembl_gene_id','external_gene_name', 'ensembl_transcript_id',
-                                       'uniprotswissprot', 'uniprot_isoform'],
-             filters = {'transcript_biotype':'protein_coding','chromosome_name':chromosomes})
+                                       'uniprotswissprot'],
+             filters = {'transcript_gencode_basic':True,'chromosome_name':chromosomes})
 
     #indicate whether listed isoforms are canonical, alternative or unannotated in uniprot
-    translator["UniProt Isoform Type"] = np.nan
-    translator.loc[translator['UniProtKB isoform ID'].isin(canonical_isoIDs.values()), "UniProt Isoform Type"] = 'Canonical' #if annotated as canonical
-    translator.loc[(translator['UniProtKB isoform ID'].isna()) & (~translator['UniProtKB/Swiss-Prot ID'].isna()), 'UniProt Isoform Type'] = 'Canonical'  #if the only isoform
-    translator.loc[(~translator['UniProtKB isoform ID'].isna()) & (translator["UniProt Isoform Type"].isna()), "UniProt Isoform Type"] = 'Alternative'   #if has isoform ID but is not identified as canonical
+    #translator["UniProt Isoform Type"] = np.nan
+    #translator.loc[translator['UniProtKB isoform ID'].isin(canonical_isoIDs.values()), "UniProt Isoform Type"] = 'Canonical' #if annotated as canonical
+    #translator.loc[(translator['UniProtKB isoform ID'].isna()) & (~translator['UniProtKB/Swiss-Prot ID'].isna()), 'UniProt Isoform Type'] = 'Canonical'  #if the only isoform
+    #translator.loc[(~translator['UniProtKB isoform ID'].isna()) & (translator["UniProt Isoform Type"].isna()), "UniProt Isoform Type"] = 'Alternative'   #if has isoform ID but is not identified as canonical
 
     #if isoform id not provided (only one isoform), add '-1' to uniprot id in isoform column
-    translator['UniProtKB isoform ID'] = translator.apply(lambda x: x['UniProtKB/Swiss-Prot ID'] + '-1' if x['UniProtKB isoform ID'] != x['UniProtKB isoform ID'] and x['UniProtKB/Swiss-Prot ID'] == x['UniProtKB/Swiss-Prot ID'] else x['UniProtKB isoform ID'], axis = 1)
+    #translator['UniProtKB isoform ID'] = translator.apply(lambda x: x['UniProtKB/Swiss-Prot ID'] + '-1' if x['UniProtKB isoform ID'] != x['UniProtKB isoform ID'] and x['UniProtKB/Swiss-Prot ID'] == x['UniProtKB/Swiss-Prot ID'] else x['UniProtKB isoform ID'], axis = 1)
     
 
     #identify potential gene name errors and report if any (same gene name and transcript ID are associated with multiple protein IDs)
@@ -82,7 +82,7 @@ def download_translator(logger, canonical_isoIDs = None):
 
     #load additional ID data that relates Ensembl to external databases (PDB, RefSeq, CCSD)
     translator2 = dataset.query(attributes=['ensembl_gene_id','external_gene_name', 'ensembl_transcript_id', 'pdb','refseq_mrna', 'ccds'],
-             filters = {'transcript_biotype':'protein_coding',
+             filters = {'transcript_gencode_basic':True,
              'chromosome_name':chromosomes})
     
     #merge two dataframes, drop any duplicates caused by merging
@@ -121,28 +121,29 @@ def checkForTranslatorErrors(translator, logger = None):
 
     translator.loc[translator.duplicated(['Gene name', 'Gene stable ID', 'Transcript stable ID'], keep = False), 'Warnings'] = "Conflicting UniProt IDs"
 
-    #test for cases where the dominant UniProt ID is not clear (multiple canonical-seeming entries for a single gene with different UniProt IDs). Exclude genes with potential errors
-    test_for_ambiguity = translator[(translator['UniProt Isoform Type'] == 'Canonical') & (~translator['Gene name'].isin(list(test_for_errors['Gene name'].unique())))]
-    test_for_ambiguity = test_for_ambiguity.groupby('Gene name')['UniProtKB/Swiss-Prot ID'].apply(set).apply(len)
-    if test_for_ambiguity.shape[0] > 1:
-        ambiguous_genes = ', '.join(list(np.unique(test_for_ambiguity[test_for_ambiguity > 1].index)))
-        num_ambigous_genes = len(np.unique(test_for_ambiguity[test_for_ambiguity > 1].index))
-        warnings.warn(f"There are {num_ambigous_genes} genes that correspond to multiple UniProt entries. Recommend denoting which UniProt ID should be considered canonical, these genes will be mapped, but will not be considered when assessing splice events")
-        if logger is not None:
-            logger.warning(f"There are {num_ambigous_genes} genes that correspond to multiple UniProt entries: {ambiguous_genes}. Recommend denoting which UniProt ID should be considered canonical, these genes will be mapped, but will not be considered when assessing splice events")
+    if 'UniProt Isoform Type' in translator.columns:
+        #test for cases where the dominant UniProt ID is not clear (multiple canonical-seeming entries for a single gene with different UniProt IDs). Exclude genes with potential errors
+        test_for_ambiguity = translator[(translator['UniProt Isoform Type'] == 'Canonical') & (~translator['Gene name'].isin(list(test_for_errors['Gene name'].unique())))]
+        test_for_ambiguity = test_for_ambiguity.groupby('Gene name')['UniProtKB/Swiss-Prot ID'].apply(set).apply(len)
+        if test_for_ambiguity.shape[0] > 1:
+            ambiguous_genes = ', '.join(list(np.unique(test_for_ambiguity[test_for_ambiguity > 1].index)))
+            num_ambigous_genes = len(np.unique(test_for_ambiguity[test_for_ambiguity > 1].index))
+            warnings.warn(f"There are {num_ambigous_genes} genes that correspond to multiple UniProt entries. Recommend denoting which UniProt ID should be considered canonical, these genes will be mapped, but will not be considered when assessing splice events")
+            if logger is not None:
+                logger.warning(f"There are {num_ambigous_genes} genes that correspond to multiple UniProt entries: {ambiguous_genes}. Recommend denoting which UniProt ID should be considered canonical, these genes will be mapped, but will not be considered when assessing splice events")
 
-    #add warning to translator dataframe for genes with multiple possible canonical proteins
-    translator.loc[translator['Gene name'].isin(test_for_ambiguity[test_for_ambiguity > 1].index), 'Warnings'] = "Multiple Possible Canonical Proteins for Gene"
+        #add warning to translator dataframe for genes with multiple possible canonical proteins
+        translator.loc[translator['Gene name'].isin(test_for_ambiguity[test_for_ambiguity > 1].index), 'Warnings'] = "Multiple Possible Canonical Proteins for Gene"
 
-def create_trim_translator(from_type, to_type):
+def create_trim_translator(translator, from_type, to_type):
     """
     Reduce translator object to two database ids of interest, removing any duplicates
     """
-    if from_type in config.translator.columns and to_type in config.translator.columns:
-        return config.translator[[from_type, to_type]].drop_duplicates()
-    elif from_type in config.translator.columns:
+    if from_type in translator.columns and to_type in translator.columns:
+        return translator[[from_type, to_type]].drop_duplicates()
+    elif from_type in translator.columns:
         raise ValueError(f'{to_type} is not in the translator object')
-    elif to_type in config.translator.columns:
+    elif to_type in translator.columns:
         raise ValueError(f'{from_type} is not in the translator object')
     else:
         raise ValueError(f'Neither {from_type} nor {to_type} are in the translator object')
@@ -271,6 +272,128 @@ def processEnsemblFasta(file, id_col = 'ID', seq_col = 'Seq'):
             data_dict[seq_col].append(seq)
             
     return pd.DataFrame(data_dict)
+
+def process_UniProt_fasta(file):
+    """
+    Extract sequences from a FASTA file and return a dictionary with UniProt IDs as keys and sequences as values.
+
+    Parameters
+    ----------
+    file: string
+        path to FASTA file
+    
+    Returns
+    -------
+    dict
+        dictionary with UniProt IDs as keys and sequences as values
+    """
+    seqs = {}
+    with gzip.open(file, "rt") as handle:
+        for record in SeqIO.parse(handle, "fasta"):
+            uniprot_id = record.id.split('|')[1]
+            seqs[uniprot_id] = str(record.seq)
+    return seqs
+
+def download_and_process_uniprot_fasta(url):
+    # Download the gzipped FASTA file
+    response = requests.get(url)
+    response.raise_for_status()
+    # Decompress the file in memory
+    seqs = {}
+    with gzip.open(BytesIO(response.content), 'rt') as fasta_file:
+        # Parse FASTA records
+        for record in SeqIO.parse(fasta_file, "fasta"):
+            uniprot_id = record.id.split('|')[1]
+            seqs[uniprot_id] = str(record.seq)
+    return seqs
+
+def get_isoform_id(transcripts, transcript_id, swissprot_id, isoform_seqs, canonical_seqs):
+    """
+    Given isoform sequence information from ensembl and specific transcript/protein ids, identify the corresponding UniProt isoform ID
+
+    Parameters
+    ----------
+    transcripts: pandas dataframe
+        dataframe containing transcript information
+    transcript_id: string
+        ID of the transcript to check
+    swissprot_id: string
+        ID of the SwissProt protein to check
+    isoform_seqs: dict
+        dictionary containing isoform sequences downloaded directly from UniProt from FTP site
+    canonical_seqs: dict
+        dictionary containing canonical sequences downloaded directly from UniProt FTP site
+
+    Returns
+    -------
+    string
+        UniProt isoform ID if found, otherwise np.nan
+
+    """
+        #get amino acid sequence associated with transcript
+    if transcript_id not in transcripts.index:
+        return np.nan
+    
+    
+    trans_seq = transcripts.loc[transcript_id, 'Amino Acid Sequence']
+
+    #check canonical sequence first
+    swissprot_seq = canonical_seqs[swissprot_id]
+    if trans_seq == swissprot_seq:
+        isoform_id = config.canonical_isoIDs[swissprot_id]
+        return isoform_id
+    elif config.all_isoforms[swissprot_id] == config.all_isoforms[swissprot_id]:
+        #check isoforms
+        isoforms = [swissprot_id]
+        for iso in isoforms:
+            if iso != config.canonical_isoIDs[swissprot_id] and iso in isoform_seqs:
+                #start with canonical sequence
+                uniprot_seq = isoform_seqs[iso]
+                #check if sequence matches
+                if trans_seq == uniprot_seq:
+                    return iso
+        return np.nan
+    else:
+        return np.nan
+
+def match_all_isoforms(translator, transcripts, isoform_seqs, swissprot_seqs):
+    """
+    Given the location of UniProt fasta files (isoform_fasta and canonical_fasta),
+    match all transcripts in translator dataframe to their corresponding transcripts.
+
+    Parameters
+    ----------
+    translator: pd.DataFrame
+        dataframe containing transcript and protein mapping information
+    transcripts: pd.DataFrame
+        dataframe containing transcript sequences
+    isoform_fasta: str
+        path to the isoform fasta file, downloaded from UniProt FTP site
+    canonical_fasta: str
+        path to the canonical fasta file (SwissProt), downloaded from UniProt FTP site
+
+    Returns
+    -------
+    dict
+        dictionary mapping transcript IDs to their corresponding UniProt isoform IDs
+    """
+
+    #extract only unique transcript/swiss-prot pairs
+    trim_translator = translator[['Transcript stable ID', 'UniProtKB/Swiss-Prot ID']].drop_duplicates()
+
+    #iterate through transcripts and identify the matching isoform seq
+    iso_match = {}
+    for index, row in tqdm(trim_translator.iterrows(), total = trim_translator.shape[0]):
+        transcript_id = row['Transcript stable ID']
+        swissprot_id = row['UniProtKB/Swiss-Prot ID']
+        #if swissprot id is not null, find if transcript seq matches specific isoform
+        if swissprot_id == swissprot_id:
+            isoform_id = get_isoform_id(transcripts, transcript_id, swissprot_id, isoform_seqs = isoform_seqs, canonical_seqs = swissprot_seqs)
+            iso_match[transcript_id] = isoform_id
+        else:
+            iso_match[transcript_id] = np.nan
+
+    return iso_match
     
 def getUniProtCanonicalIDs(translator, ID_type = 'Transcript'):
     """
@@ -289,9 +412,9 @@ def getUniProtCanonicalIDs(translator, ID_type = 'Transcript'):
         list of canonical IDs
     """
     if ID_type == 'Transcript':
-        return config.translator.loc[config.translator['canonicals']=='canonical', 'Transcript stable ID'].values
+        return translator.loc[translator['canonicals']=='canonical', 'Transcript stable ID'].values
     elif ID_type == 'Protein':
-        return translator[translator['canonicals']=='canonical', 'UniProtKB/Swiss-Prot ID'].values
+        return translator.loc[translator['canonicals']=='canonical', 'UniProtKB/Swiss-Prot ID'].values
     else:
         print("Please indicate whether you want 'Transcript' or 'Protein' IDs")
         return None
@@ -497,7 +620,7 @@ def get_canonical_isoID(alternative_products, accession):
     Returns
     -------
     canonical_isoid: str
-        Isoform ID associated with the canonical isoform of the protein. If only one isoform, isoform ID is listed as '<Accession#>-1'
+        Isoform ID associated with the canonical isoform of the protein. If only one isoform, isoform ID is listed as swissprot accession
     """
     #split parts of information by semicolon
     split_list = alternative_products.split(';')
@@ -514,9 +637,91 @@ def get_canonical_isoID(alternative_products, accession):
             canonical_isoid = canonical_isoid.split('=')[1]
         else:
             raise ValueError(f'Could not find isoform id for {accession}')
+        
+        #for rare case where multiple accessions are provided, find one that matches primary Accession
+        if ',' in canonical_isoid:
+            ids = canonical_isoid.split(',')
+            for id in ids:
+                if id.split('-')[0] == accession:
+                    canonical_isoid = id
+                    break
     else:
-        canonical_isoid = accession + '-1'
+        #if no alternative isoforms, iso id is just the swissprot id
+        canonical_isoid = accession
     return canonical_isoid
+
+def get_isoform_IDs(alternative_products, accession):
+    """
+    Given download of uniprot information containing alternative products/isoforms, create list of all isoform IDs.
+    
+    Parameters
+    ----------
+    alternative_products: str
+        alternative_products information returned from UniProtKB
+    accession: str
+        primary accession number for protein
+
+    Returns
+    -------
+    isoids: str
+        list of all Isofrom IDs (canoncial and alternative) currently listed in UniProt
+    """
+    #get list of all isoform IDs
+    split = alternative_products.split(';')
+    #find all entries with 'IsoID in entry
+    isoids = [entry.split('=')[-1].strip(' ') for entry in split if 'IsoId' in entry]
+
+    #trim cases that have multiple ids associated with them and expand
+    for iso in isoids:
+        if ',' in iso:
+            #separate entries
+            iso_split = iso.split(',')
+            #temporarily remove from isoids
+            isoids.remove(iso)
+            for split_iso in iso_split: 
+                if split_iso.split('-')[0] == accession: #get rid of old IDs that don't match swissprot ID
+                    isoids.append(split_iso.strip())
+                    
+    if len(isoids) > 0:
+        return isoids
+    else:
+        return np.nan
+
+    
+def get_uniprot_isoform_info():
+    """
+    Perform batch query of all swissprot proteins and download isoform information/alternative products. Use this to extract the canonical isoform and all listed alternative isoforms.
+
+    Returns
+    -------
+    canonical_isoIDs: dict
+        Mapping of primary accession to canonical isoform ID
+    all_isoforms: dict
+        Mapping of primary accession to list of all isoform IDs
+    """
+    #start up session for interfacting with rest api
+    session, re_next_link = establish_session()
+
+    #url for performing batch queries
+    url =  "https://rest.uniprot.org/uniprotkb/search?query=reviewed:true+AND+organism_id:9606&format=tsv&fields=accession,cc_alternative_products&size=500"
+    canonical_isoIDs = {}
+    all_isoforms = {}
+    #iterate through entries and extract isoform IDs
+    for batch, total in get_batch(url, session, re_next_link):
+        for line in batch.text.splitlines()[1:]:
+            #extract swissprot accession and information on isoforms
+            primaryAccession, alternative_products = line.split('\t')
+            #using alternative products to identify, get canonical isoform ID
+            canonical_isoIDs[primaryAccession] = get_canonical_isoID(alternative_products, primaryAccession)
+
+                
+
+            #get list of all isoform IDs
+            all_isoforms[primaryAccession] = get_isoform_IDs(alternative_products, primaryAccession)
+
+    return canonical_isoIDs, all_isoforms
+
+
 
 def join_unique_entries(x, sep = ';'):
     """
