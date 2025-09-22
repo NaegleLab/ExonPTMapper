@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 
 import sys
 sys.path.append('..')
-import sql_interface
+from SQL_Database import sql_interface
 
 class plotter(sql_interface.mapper_db):
     def __init__(self, conn):

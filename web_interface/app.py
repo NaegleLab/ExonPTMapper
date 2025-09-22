@@ -20,7 +20,7 @@ def get_connection(path):
 #if 'plotter' not in st.session_state:
 #    plotter = plotting.plotter('../mapper.db')
 
-conn = get_connection('../mapper.db')
+conn = get_connection('../SQL_Database/mapper.db')
 plotter = plotting.plotter(conn)
 
 menu_data = [
