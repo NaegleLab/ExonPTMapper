@@ -477,7 +477,7 @@ class plotter:
             if transcript_id is None:
                 raise ValueError('Transcript ID must be provided to plot alternative transcripts')
 
-            ptm_loc_col = 'Alternative Protein Location (AA)'
+            ptm_loc_col = 'Alternative Protein Position (AA)'
             ptm = self.alternative_ptms[(self.alternative_ptms['Alternative Transcript'] == transcript_id) & (self.alternative_ptms['Source of PTM'] == ptm)].squeeze()
 
             if ptm[ptm_loc_col] == ptm[ptm_loc_col]:
