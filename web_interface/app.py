@@ -55,15 +55,17 @@ if menu == "Protein":
 
         exons = plotter.get_exon_info(isoform_id, id_type = 'Isoform')
         ptms = plotter.get_ptm_table(isoform_id, include_constitutive = True)
-        if isoform_id == canonical_isoform:
-            domains = plotter.get_domain_info(isoform_id.split('-')[0], id_type = 'UniProt')
+        #if isoform_id == canonical_isoform:
+        #    domains = plotter.get_domain_info(isoform_id.split('-')[0], id_type = 'UniProt')
             #domains = None
-        else:
-            domains = None
+        #else:
+        #    domains = None
             
         fig = plotting.plot_protein_info(exons, ptms)
-        for d in domains:
-            fig = plotting.add_domain(fig, d[2],d[3], d[1])
+        if isoform_id == canonical_isoform:
+            domains = plotter.get_domain_info(isoform_id.split('-')[0], id_type = 'UniProt')
+            for d in domains:
+                fig = plotting.add_domain(fig, d[2],d[3], d[1])
         st.plotly_chart(fig)
 elif menu == "Splice Event":
     st.title("Splice Event Analysis")
