@@ -26,6 +26,21 @@ class mapper_db:
         cursor = self.conn.execute(query, (gene_name,))
         gene_stable_id = cursor.fetchone()[0]
         return gene_stable_id
+    
+    def get_gene_name(self, id, id_type = 'Gene ID'):
+        if id_type == 'Gene ID':
+            query = """SELECT Gene_name FROM genes WHERE Gene_stable_ID = ?"""
+        elif id_type == 'UniProt':
+            query = """SELECT genes.Gene_name FROM genes 
+                    JOIN gene_to_proteins ON genes.Gene_stable_ID = gene_to_proteins.Gene_stable_ID
+                    WHERE gene_to_proteins.SwissProt_ID = ?"""
+        else:
+            raise ValueError("id_type must be 'Gene ID' or 'UniProt'")
+        
+        gene_name = self.conn.execute(query, (id,)).fetchone()
+        if gene_name is not None:
+            gene_name = gene_name[0]
+        return gene_name
 
     
     def convert_to_swissprot(self, gene_name):
@@ -33,8 +48,11 @@ class mapper_db:
 
         query = """SELECT SwissProt_ID FROM gene_to_proteins WHERE Gene_stable_ID = ?"""
         cursor = self.conn.execute(query, (gene_stable_id,))
-        swissprot_id = cursor.fetchone()[0]
+        swissprot_id = cursor.fetchone()
+        if swissprot_id is not None:
+            swissprot_id = swissprot_id[0]
         return swissprot_id
+
 
     def get_canonical_isoform(self, id, id_type = 'UniProt'):
         if id_type == 'UniProt':
@@ -44,7 +62,9 @@ class mapper_db:
             JOIN genes ON isoforms.Gene_stable_ID = genes.Gene_stable_ID
             WHERE genes.Gene_name = ? and isoforms.Isoform_Type = 'Canonical'"""
         
-        id = self.conn.execute(query, (id,)).fetchone()[0]
+        id = self.conn.execute(query, (id,)).fetchone()
+        if id is not None:
+            id = id[0]
         return id
 
     def get_isoform_ids(self, id, id_type = 'UniProt'):

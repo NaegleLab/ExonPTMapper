@@ -199,6 +199,9 @@ def get_transcript_info(mapper_db, id, id_type = 'Gene Name', functional_thresho
     gene_end = mapper_db.genes.loc[gene_id, 'Gene end (bp)']
     
     return transcript_ids, gene_start, gene_end
+
+def plot_single_transcript(mapper_db, tid, gene_start, gene_end, strand, ax):
+    pass
     
 
 def plot_transcripts(mapper_db, id, id_type = 'Gene Name', fig_width = 15, functional_threshold = 0, transcript_subset = None, sort_by_function = True, coding_color = 'red', noncoding_color = 'white', add_ptms = False, ax = None):
@@ -290,13 +293,13 @@ def plot_transcripts(mapper_db, id, id_type = 'Gene Name', fig_width = 15, funct
 
             #check if exon is fully noncoding, fully coding, or if cds start/stop exists in exon. Plot exon accordingly
             if threeprime < gene_cds_start or fiveprime > gene_cds_end: #fully noncoding
-                rect = patches.Rectangle((fiveprime,num_transcripts - row +0.2), threeprime - fiveprime, 0.6, facecolor = noncoding_color, edgecolor = 'black', zorder = 2)
+                rect = patches.Rectangle((fiveprime,num_transcripts - row +0.4), threeprime - fiveprime, 0.2, facecolor = noncoding_color, edgecolor = 'black', zorder = 2)
                 ax.add_patch(rect)
             elif fiveprime >= gene_cds_start and threeprime <= gene_cds_end: #fully coding
                 rect = patches.Rectangle((fiveprime,num_transcripts - row +0.2), threeprime - fiveprime, 0.6, facecolor = coding_color, edgecolor = 'black', zorder = 2)
                 ax.add_patch(rect)
             else:#partially coding
-                noncoding_rect = patches.Rectangle((fiveprime,num_transcripts - row +0.2), threeprime - fiveprime, 0.6, facecolor = noncoding_color, edgecolor = 'black', zorder = 2)
+                noncoding_rect = patches.Rectangle((fiveprime,num_transcripts - row +0.4), threeprime - fiveprime, 0.2, facecolor = noncoding_color, edgecolor = 'black', zorder = 2)
                 ax.add_patch(noncoding_rect)
                 
                 if fiveprime < gene_cds_start:
