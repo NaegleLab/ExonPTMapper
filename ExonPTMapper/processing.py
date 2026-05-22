@@ -132,11 +132,12 @@ def processExons(exon_info, exon_sequences):
     
     #remove transcripts with incomplete exon sequence information
     missing_info_transcripts = exons.loc[exons['Exon Sequence'].isna()]
-    #if it is the first exon or last exon in sequence, that is okay
-    remove_transcripts = []
-    for i, row in missing_info_transcripts.iterrows():
-        if row['Exon rank in transcript'] != 1 and row['Exon rank in transcript'] != exons.loc[exons['Transcript stable ID'] == row['Transcript stable ID'], 'Exon rank in transcript'].max():
-            remove_transcripts.append(row['Transcript stable ID'])
+    max_ranks = missing_info_transcripts.groupby('Transcript stable ID')['Exon rank in transcript'].max()
+
+    missing_info_transcripts = missing_info_transcripts[missing_info_transcripts['Exon rank in transcript'] != 1]
+    missing_info_transcripts = missing_info_transcripts[missing_info_transcripts.apply(lambda x: x['Exon rank in transcript'] != max_ranks[x['Transcript stable ID']], axis = 1)]
+
+    remove_transcripts = missing_info_transcripts['Transcript stable ID'].unique()
     remove_transcripts = np.unique(remove_transcripts)
     if len(remove_transcripts) > 0:
         print(f'{len(remove_transcripts)} with incomplete exon sequence information. Removing from analysis.')

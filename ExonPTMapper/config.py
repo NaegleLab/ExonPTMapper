@@ -9,8 +9,7 @@ import warnings
 import logging
 import datetime
 
-#bio packages
-from ExonPTMapper import utility
+from proteomeScoutAPI import ProteomeScoutAPI
 
 
 package_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,10 +17,10 @@ modification_conversion = pd.read_csv(package_dir + '/../Resource_Files/modifica
 
 
 #update these lines as needed
-api_dir = './'
-ps_data_dir = api_dir + '/ProteomeScoutAPI/proteomescout_mammalia_20220131/data.tsv'
+#api_dir = 'C:\\Users\\crowl\\OneDrive\\Documents\\GradSchool\\Research\\ProteomeScoutAPI\\'
+#ps_data_dir = api_dir + '/ProteomeScoutAPI/Proteome/data.tsv'
 source_data_dir = './source_data/'
-processed_data_dir = './processed_data_dir/'
+processed_data_dir = './processed_data/'
 available_transcripts_file = processed_data_dir + 'available_transcripts.json'
 
 #initialize logger
@@ -35,9 +34,9 @@ handler.setFormatter(log_format)
 logger.addHandler(handler)
 
 #load ProteomeScoutAPI
-sys.path.append(api_dir)
-from ProteomeScoutAPI import proteomeScoutAPI
-ps_api = proteomeScoutAPI.ProteomeScoutAPI(ps_data_dir)
+#sys.path.append(api_dir)
+#from proteomeScoutAPI import ProteomeScoutAPI
+ps_api = ProteomeScoutAPI()
 
 #check if available transcripts (transcripts with matching info in UniProt and Ensembl) have been identified. If so, load.
 if os.path.isfile(available_transcripts_file):
@@ -60,25 +59,34 @@ else:
     psp_matched_transcripts = None
 
 
+
+
 #Download the UniProt isoform ids associated with the listed canonical isoform
-print('Downloading Canonical UniProt isoforms')
-if os.path.isfile(source_data_dir + 'uniprot_canonical_ids.json'):
+print('Downloading UniProt isoforms information')
+if os.path.isfile(source_data_dir + 'uniprot_canonical_ids.json') and os.path.isfile(source_data_dir + 'uniprot_isoforms_ids.json'):
     with open(source_data_dir + 'uniprot_canonical_ids.json', 'r') as f:
         canonical_isoIDs = json.load(f)
+    with open(source_data_dir + 'uniprot_isoforms_ids.json', 'r') as f:
+        all_isoforms = json.load(f)
+        #iterate through and separate by semicolon
+        for key, value in all_isoforms.items():
+            if value == value:
+                all_isoforms[key] = value.split(';')
 else:
-    #start up session for interfacting with rest api
-    session, re_next_link = utility.establish_session()
+    from ExonPTMapper import utility
+    canonical_isoIDs, all_isoforms = utility.get_uniprot_isoform_info()
 
-    url =  "https://rest.uniprot.org/uniprotkb/search?query=reviewed:true+AND+organism_id:9606&format=tsv&fields=accession,cc_alternative_products&size=500"
-    canonical_isoIDs = {}
-    for batch, total in utility.get_batch(url, session, re_next_link):
-        for line in batch.text.splitlines()[1:]:
-            primaryAccession, alternative_products = line.split('\t')
-            canonical_isoIDs[primaryAccession] = utility.get_canonical_isoID(alternative_products, primaryAccession)
+    #join all_isoforms list into string separated by ';'
+    for key, value in all_isoforms.items():
+        if value == value:
+            all_isoforms[key] = ';'.join(value)
 
     #save dictionary as json file
     with open(source_data_dir + 'uniprot_canonical_ids.json', 'w') as f:
         json.dump(canonical_isoIDs, f)
+
+    with open(source_data_dir + 'uniprot_isoforms_ids.json', 'w') as f:
+        json.dump(all_isoforms, f)
 
 
 #load uniprot translator dataframe, process if need be
@@ -87,6 +95,7 @@ if os.path.isfile(source_data_dir + 'translator.csv'):
     translator = pd.read_csv(source_data_dir + 'translator.csv')
 else:
     logger.info('Translator file not found. Downloading from Database IDs of Ensembl, UniProt, PDB, CCDS, and Refseq via pybiomart.')
+    from ExonPTMapper import utility
     translator = utility.download_translator(logger, canonical_isoIDs)
     logger.info('Finished downloading and processing translator file. Saving to processed data directory.')
     
